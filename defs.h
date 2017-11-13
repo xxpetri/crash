@@ -534,6 +534,8 @@ struct program_context {
 #define QEMU_MEM_DUMP_COMPRESSED (0x10000ULL)
 #define SNAP        (0x20000ULL)
 #define EXCLUDED_VMEMMAP (0x40000ULL)
+#define ENDIAN_DIFF      (0x80000ULL)							/* Nathan */
+#define NEED_SWAP()  (pc->flags2 & ENDIAN_DIFF)					/* Nathan */
 #define is_excluded_vmemmap() (pc->flags2 & EXCLUDED_VMEMMAP)
 #define MEMSRC_LOCAL         (0x80000ULL)
 #define REDZONE             (0x100000ULL)
@@ -754,24 +756,6 @@ struct kernel_table {                   /* kernel data */
 	ulonglong flags2;
 	char *source_tree;
 };
-
-/*
- * Aid for the two versions of the kernel's module list linkage.
- */
-#define NEXT_MODULE(next_module, modbuf)                             \
-{                                                                    \
-        switch (kt->flags & (KMOD_V1|KMOD_V2))                       \
-        {                                                            \
-        case KMOD_V1:                                                \
-                next_module = ULONG(modbuf + OFFSET(module_next));   \
-                break;                                               \
-        case KMOD_V2:                                                \
-                next_module = ULONG(modbuf + OFFSET(module_list));   \
-                if (next_module != kt->kernel_module)                \
-                        next_module -= OFFSET(module_list);          \
-                break;                                               \
-        }                                                            \
-}
 
 #define THIS_KERNEL_VERSION ((kt->kernel_version[0] << 16) + \
 			     (kt->kernel_version[1] << 8) + \
@@ -1027,6 +1011,9 @@ struct machdep_table {
         int (*verify_line_number)(ulong, ulong, ulong);
         void (*get_irq_affinity)(int);
         void (*show_interrupts)(int, ulong *);
+		
+		/* Appcore add ons */
+	void (*cputime_to_timeval)(ulonglong, struct timeval*);
 };
 
 /*
@@ -1225,6 +1212,8 @@ struct offset_table {                    /* stash of commonly-used offsets */
 	long task_struct_thread_info;
 	long task_struct_nsproxy;
 	long task_struct_rlim;
+	long task_struct_static_prio;
+	long task_struct_rt_priority;
 	long thread_info_task;
 	long thread_info_cpu;
 	long thread_info_previous_esp;
@@ -1996,6 +1985,20 @@ struct offset_table {                    /* stash of commonly-used offsets */
 	long mod_arch_specific_orc_unwind;
 	long task_struct_policy;
 	long kmem_cache_random;
+	
+	/* appcore add ons */
+	long mm_struct_map_count;
+	long mm_struct_flags;
+	long mm_struct_saved_auxv;
+	
+	long vm_area_struct_anon_vma;
+	long pid_level;
+	
+	long sigset_t_sig;
+	
+	long task_struct_real_cred;
+	long cred_gid;
+	long cred_uid;
 };
 
 struct size_table {         /* stash of commonly-used sizes */
@@ -2146,6 +2149,7 @@ struct size_table {         /* stash of commonly-used sizes */
 	long sk_buff_len;
 	long orc_entry;
 	long task_struct_policy;
+	long cred;
 };
 
 struct array_table {
@@ -2291,6 +2295,56 @@ DEF_LOADER(pointer_t);
 #define VOID_PTR(ADDR)  *((void **)((char *)(ADDR)))
 
 #endif /* NEED_ALIGNED_MEM_ACCESS */
+
+/*
+ *  Endian aware facilitators for pulling correctly-sized data out of a buffer
+ *  at a known address.
+ */
+#define __SWAP16(RTYPE, ADDR)\
+       ((RTYPE)swap16(*(uint16_t *)((char *)(ADDR)), NEED_SWAP()))			/* Nathan */
+
+#define __SWAP32(RTYPE, ADDR)\
+       ((RTYPE)swap32(*(uint32_t *)((char *)(ADDR)), NEED_SWAP()))			/* Nathan */
+
+#define __SWAP64(RTYPE, ADDR)\
+       ((RTYPE)swap64(*(uint64_t *)((char *)(ADDR)), NEED_SWAP()))			/* Nathan */
+
+#define EINT(ADDR)       __SWAP32(int, ADDR)								/* Nathan */
+#define EUINT(ADDR)      __SWAP32(uint, ADDR)								/* Nathan */
+#define EULONGLONG(ADDR) __SWAP64(ulonglong, ADDR)							/* Nathan */
+#define EUSHORT(ADDR)    __SWAP16(ushort, ADDR)								/* Nathan */
+#define ESHORT(ADDR)     __SWAP16(short, ADDR)								/* Nathan */
+
+#ifdef _64BIT_																/* Nathan */
+#define ELONG(ADDR)      __SWAP64(long, ADDR)								/* Nathan */
+#define EULONG(ADDR)     __SWAP64(ulong, ADDR)								/* Nathan */
+#define EULONG_PTR(ADDR) __SWAP64((ulong *), ADDR)							/* Nathan */
+#define EVOID_PTR(ADDR)  __SWAP64((void *),ADDR)							/* Nathan */
+#else																		/* Nathan */
+#define ELONG(ADDR)      __SWAP32(long, ADDR)								/* Nathan */
+#define EULONG(ADDR)     __SWAP32(ulong, ADDR)								/* Nathan */
+#define EULONG_PTR(ADDR) __SWAP32((ulong *), ADDR)							/* Nathan */
+#define EVOID_PTR(ADDR)  __SWAP32((void *),ADDR)							/* Nathan */
+#endif																		/* Nathan */
+
+void swap_size(void* buf, size_t sz, int swap, int strict );
+void swap_array(void* buf, size_t sz, int swap, int strict, long count );
+uint64_t swap64(uint64_t val, int swap);
+
+#define RELAXED_SWAP 0
+#define STRICT_SWAP 1
+
+/* Target's LONG size: */
+#ifdef _64BIT_
+#define SIZEOF_LONG     8
+#else
+#define SIZEOF_LONG     4
+#endif
+
+#define ENDIAN_SWAP(VAR) \
+	swap_size(&(VAR), sizeof(VAR), NEED_SWAP(), STRICT_SWAP)
+
+#define ENDIAN_ASSIGN(VAR, VAL) { (VAR) = (VAL); ENDIAN_SWAP(VAR); }
 
 struct node_table {
 	int node_id;
@@ -3544,6 +3598,8 @@ struct machine_specific {
 	/* platform special vtop */
 	int (*vtop_special)(ulong vaddr, physaddr_t *paddr, int verbose);
 	void *mmu_special;
+	
+	ulong	tb_ticks_per_sec;
 };
 
 /* machdep flags for ppc32 specific */
@@ -4621,6 +4677,7 @@ extern long _ZOMBIE_;
 #define PS_MSECS      (0x20000)
 #define PS_SUMMARY    (0x40000)
 #define PS_POLICY     (0x80000)
+#define PS_PRIO    (0x80000000)   /* do not use simply next bit to avoid collicions */
 
 #define PS_EXCLUSIVE (PS_TGID_LIST|PS_ARGV_ENVP|PS_TIMES|PS_CHILD_LIST|PS_PPID_LIST|PS_LAST_RUN|PS_RLIMIT|PS_MSECS|PS_SUMMARY)
 
@@ -4951,6 +5008,18 @@ struct rb_node *rb_right(struct rb_node *, struct rb_node *);
 struct rb_node *rb_left(struct rb_node *, struct rb_node *);
 struct rb_node *rb_next(struct rb_node *);
 struct rb_node *rb_last(struct rb_root *);
+
+void swap_Elf32_Ehdr(void*, int);	/* Nathan */
+void swap_Elf32_Phdr(void*, int);	/* Nathan */
+void swap_Elf32_Nhdr(void*, int);	/* Nathan */
+void swap_Elf64_Ehdr(void*, int);	/* Nathan */
+void swap_Elf64_Phdr(void*, int);	/* Nathan */
+void swap_Elf64_Nhdr(void*, int);	/* Nathan */
+
+/*
+ * Aid for the two versions of the kernel's module list linkage.
+ */
+unsigned long next_module(unsigned long current_mod, char * modbuf);
 
 /* 
  *  symbols.c 
@@ -5348,6 +5417,7 @@ void sort_tgid_array(void);
 int sort_by_tgid(const void *, const void *);
 int in_irq_ctx(ulonglong, int, ulong);
 void check_stack_overflow(void);
+int task_nice( struct task_context * );
 
 /*
  *  extensions.c

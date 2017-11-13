@@ -177,6 +177,9 @@ is_netdump(char *file, ulong source_query)
 	     (__BYTE_ORDER == __BIG_ENDIAN)) ||
 	    ((eheader[EI_DATA] == ELFDATA2MSB) && 
 	     (__BYTE_ORDER == __LITTLE_ENDIAN)));
+    
+        if( swap )									/* Nathan */
+            pc->flags2 |= ENDIAN_DIFF;				/* Nathan */
 
         if ((elf32->e_ident[EI_CLASS] == ELFCLASS32) &&
 	    (swap16(elf32->e_type, swap) == ET_CORE) &&

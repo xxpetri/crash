@@ -276,6 +276,7 @@ process_elf32_notes(void *note_buf, unsigned long size_note)
 
 	for (index = 0; index < size_note; index += len) {
 		nt = note_buf + index;
+        swap_Elf32_Nhdr(nt, NEED_SWAP());			/* Nathan */
 
 		if (nt->n_type == NT_PRSTATUS) {
 			dd->nt_prstatus_percpu[num] = nt;
@@ -319,6 +320,7 @@ process_elf64_notes(void *note_buf, unsigned long size_note)
 
 	for (index = 0; index < size_note; index += len) {
 		nt = note_buf + index;
+        swap_Elf64_Nhdr(nt, NEED_SWAP());				/* Nathan */
 
 		if (nt->n_type == NT_PRSTATUS) {
 			dd->nt_prstatus_percpu[num] = nt;
@@ -367,7 +369,7 @@ x86_process_elf_notes(void *note_ptr, unsigned long size_note)
 		process_elf32_notes(note_ptr, size_note);
 }
 
-#if defined(__i386__) && (defined(ARM) || defined(MIPS))
+#if defined(__i386__) && (defined(ARM) || defined(MIPS) || defined(PPC))		/* Nathan */
 /*
  * The kdump_sub_header member offsets are different when the crash 
  * binary is built natively on an ARM host vs. when built with  
@@ -416,6 +418,7 @@ x86_process_elf_notes(void *note_ptr, unsigned long size_note)
  * [88]    unsigned long long   max_mapnr_64;  /  header_version 6 and later  /
  * };
  * 
+ * The same behaviour layout is seen on PPC.
  */
 
 struct kdump_sub_header_ARM_target {
@@ -470,7 +473,70 @@ arm_kdump_header_adjust(int header_version)
 		kdsh->max_mapnr_64 = dd->max_mapnr;
 	}
 }
-#endif  /* __i386__ && (ARM || MIPS) */
+#endif  /* __i386__ && (ARM || MIPS || PPC) */		/* Nathan */
+
+static void																/* Nathan */
+swap_diskdump_hdr(struct disk_dump_header* hdr, int swap)				/* Nathan */
+{																	
+         if(swap) {														/* Nathan */
+               hdr->header_version = EINT(&hdr->header_version);		/* Nathan */
+              hdr->timestamp.tv_sec = EUINT(&hdr->timestamp.tv_sec);	/* Nathan */
+              hdr->timestamp.tv_usec = EUINT(&hdr->timestamp.tv_usec);	/* Nathan */
+              hdr->status = EUINT(&hdr->status);						/* Nathan */
+              hdr->block_size = EINT(&hdr->block_size);					/* Nathan */
+              hdr->sub_hdr_size = EINT(&hdr->sub_hdr_size);				/* Nathan */
+              hdr->bitmap_blocks = EUINT(&hdr->bitmap_blocks);			/* Nathan */
+              hdr->max_mapnr = EUINT(&hdr->max_mapnr);					/* Nathan */
+              hdr->total_ram_blocks = EUINT(&hdr->total_ram_blocks);	/* Nathan */
+              hdr->device_blocks = EUINT(&hdr->device_blocks);			/* Nathan */
+              hdr->written_blocks = EUINT(&hdr->written_blocks);		/* Nathan */
+              hdr->current_cpu = EUINT(&hdr->current_cpu);				/* Nathan */
+              hdr->nr_cpus = EINT(&hdr->nr_cpus);						/* Nathan */
+       }																/* Nathan */
+}																		/* Nathan */
+
+static void																			/* Nathan */
+swap_kdump_hdr(struct kdump_sub_header* hdr, int header_version, int swap)			/* Nathan */
+{																					/* Nathan */
+        if(swap) {																	/* Nathan */
+               /* Note: makedumpfile has a 64-bit file offset (off_t) */			/* Nathan */
+              hdr->phys_base = EULONG(&hdr->phys_base);								/* Nathan */
+              hdr->dump_level = EINT(&hdr->dump_level);								/* Nathan */
+              hdr->split = EINT(&hdr->split);										/* Nathan */
+              hdr->start_pfn = EULONG(&hdr->start_pfn);								/* Nathan */
+              hdr->end_pfn = EULONG(&hdr->end_pfn);									/* Nathan */
+              if (header_version >= 3) {											/* Nathan */
+                      hdr->offset_vmcoreinfo = EULONGLONG(							/* Nathan */
+                                              &hdr->offset_vmcoreinfo);				/* Nathan */
+                      hdr->size_vmcoreinfo = EULONG(&hdr->size_vmcoreinfo);			/* Nathan */
+              }																		/* Nathan */
+              if (header_version >= 4) {											/* Nathan */
+                      hdr->offset_note = EULONGLONG(&hdr->offset_note);				/* Nathan */
+                      hdr->size_note = EULONG(&hdr->size_note);						/* Nathan */
+              }																		/* Nathan */
+              if (header_version >= 5) {											/* Nathan */
+                      hdr->offset_eraseinfo = EULONG(&hdr->offset_eraseinfo);		/* Nathan */
+                      hdr->size_eraseinfo = EULONG(&hdr->size_eraseinfo);			/* Nathan */
+              }																		/* Nathan */
+              if (header_version >= 6) {											/* Karlo */
+                      hdr->start_pfn_64 = EULONGLONG(&hdr->start_pfn_64);			/* Karlo */
+                      hdr->end_pfn_64 = EULONGLONG(&hdr->end_pfn_64);				/* Karlo */
+                      hdr->max_mapnr_64 = EULONGLONG(&hdr->max_mapnr_64);			/* Karlo */
+              }																		/* Karlo */
+       }																			/* Nathan */
+}																					/* Nathan */
+
+static void																			/* Nathan */
+swap_page_desc(page_desc_t* pd, int swap)											/* Nathan */
+{																					/* Nathan */
+        if(swap) {																	/* Nathan */
+               pd->offset = EULONGLONG(&pd->offset);								/* Nathan */
+               pd->size = EULONG(&pd->size);										/* Nathan */
+               pd->flags = EULONG(&pd->flags);										/* Nathan */
+               pd->page_flags = EULONGLONG(&pd->page_flags);						/* Nathan */
+       }																			/* Nathan */
+}																					/* Nathan */
+
 
 static int 
 read_dump_header(char *file)
@@ -519,6 +585,16 @@ restart:
 	if (!memcmp(header->signature, DISK_DUMP_SIGNATURE,
 				sizeof(header->signature))) {
 		dd->flags |= DISKDUMP_LOCAL;
+    } else if (!memcmp(header->signature, KDUMP_BE_SIGNATURE,		/* Nathan */
+                            sizeof(header->signature))) {			/* Nathan */
+            dd->flags |= KDUMP_CMPRS_LOCAL;							/* Nathan */
+            if( __BYTE_ORDER == __LITTLE_ENDIAN)					/* Nathan */
+                    pc->flags2 |= ENDIAN_DIFF;						/* Nathan */
+    } else if (!memcmp(header->signature, KDUMP_LE_SIGNATURE,		/* Nathan */
+                             sizeof(header->signature))) {			/* Nathan */
+            dd->flags |= KDUMP_CMPRS_LOCAL;							/* Nathan */
+            if( __BYTE_ORDER == __BIG_ENDIAN)						/* Nathan */
+                    pc->flags2 |= ENDIAN_DIFF;						/* Nathan */
 	} else if (!memcmp(header->signature, KDUMP_SIGNATURE,
 				sizeof(header->signature))) {
 		dd->flags |= KDUMP_CMPRS_LOCAL;
@@ -563,6 +639,8 @@ restart:
 	else if (STRNEQ(header->utsname.machine, "aarch64") &&
 	    machine_type_mismatch(file, "ARM64", NULL, 0))
 		goto err;
+    
+     swap_diskdump_hdr(header, NEED_SWAP());		/* Nathan */
 
 	if (header->block_size != block_size) {
 		block_size = header->block_size;
@@ -572,6 +650,9 @@ restart:
 				header->block_size);
 		goto restart;
 	}
+	if (CRASHDEBUG(8))
+		fprintf(fp,"header->block_size %d\n",header->block_size);
+	
 	dd->block_size  = header->block_size;
 	dd->block_shift = ffs(header->block_size) - 1;
 
@@ -639,9 +720,11 @@ restart:
 		}
 		dd->sub_header_kdump = sub_header_kdump;
 
-#if defined(__i386__) && (defined(ARM) || defined(MIPS))
+#if defined(__i386__) && (defined(ARM) || defined(MIPS) || defined(PPC) )		/* Nathan */
 		arm_kdump_header_adjust(header->header_version);
 #endif
+        swap_kdump_hdr(dd->sub_header_kdump, header->header_version,			/* Nathan */
+                        NEED_SWAP());											/* Nathan */
 		/* use 64bit max_mapnr in compressed kdump file sub-header */
 		if (header->header_version >= 6)
 			dd->max_mapnr = dd->sub_header_kdump->max_mapnr_64;
@@ -1063,7 +1146,6 @@ cache_page(physaddr_t paddr)
 	desc_pos = pfn_to_pos(pfn);
 	seek_offset = dd->data_offset
 			+ (off_t)(desc_pos - 1)*sizeof(page_desc_t);
-
 	/* read page descriptor */
 	if (FLAT_FORMAT()) {
 		if (!read_flattened_format(dd->dfd, seek_offset, &pd, sizeof(pd)))
@@ -1074,11 +1156,12 @@ cache_page(physaddr_t paddr)
 		if (read(dd->dfd, &pd, sizeof(pd)) != sizeof(pd))
 			return READ_ERROR;
 	}
+    
+    swap_page_desc(&pd, NEED_SWAP());		/* Nathan */
 
 	/* sanity check */
 	if (pd.size > block_size)
 		return READ_ERROR;
-
 	/* read page data */
 	if (FLAT_FORMAT()) {
 		if (!read_flattened_format(dd->dfd, pd.offset, dd->compressed_page, pd.size))
@@ -1281,6 +1364,20 @@ read_diskdump(int fd, void *bufptr, int cnt, ulong addr, physaddr_t paddr)
 			(ulonglong)paddr, pfn, (ulonglong)curpaddr);
 	
 	memcpy(bufptr, dd->curbufptr + page_offset, cnt);
+	
+	if (cnt == 4) {																					/* Karlo */
+		*(unsigned long *)bufptr = EULONG((unsigned long *)bufptr);
+		if (CRASHDEBUG(8)) 																				/* Karlo */
+			fprintf(fp,"read_diskdump: count: %d  value: %08lx \n", cnt,*((unsigned long *)bufptr));	/* Karlo */
+	}																								/* Karlo */
+	else if (cnt == 8) {																				/* Karlo */
+		*(unsigned long *)bufptr = EULONGLONG((unsigned long *)bufptr);
+		if (CRASHDEBUG(8)) 																				/* Karlo */
+			fprintf(fp,"read_diskdump: count: %d  value: %llx \n", cnt,*((unsigned long *)bufptr));		/* Karlo */
+	}	else {
+		if (CRASHDEBUG(8)) 																				/* Karlo */
+			fprintf(fp,"read_diskdump: count not equal four or eight %d\n",cnt);								/* Karlo */
+	}
 	return cnt;
 }
 

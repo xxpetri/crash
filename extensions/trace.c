@@ -162,6 +162,24 @@ static int write_and_check(int fd, void *data, size_t size)
 	return 0;
 }
 
+static unsigned int write16(int fd, uint16_t val)
+{
+	val = swap16(val, NEED_SWAP());
+	return write_and_check(fd, &val, sizeof(val));
+}
+
+static unsigned int write32(int fd, uint32_t val)
+{
+	val = swap32(val, NEED_SWAP());
+	return write_and_check(fd, &val, sizeof(val));
+}
+
+static unsigned int write64(int fd, uint64_t val)
+{
+	val = swap64(val, NEED_SWAP());
+	return write_and_check(fd, &val, sizeof(val));
+}
+
 #ifndef PATH_MAX
 #define PATH_MAX 4096
 #endif
@@ -1035,10 +1053,16 @@ static int ftrace_init_event_fields(ulong fields_head, int *pnfields,
 		read_value(size, field, ftrace_event_field, size);
 		read_value(is_signed, field, ftrace_event_field, is_signed);
 
-		if (!read_string(name_addr, field_name, 128))
-			goto out_fail;
-		if (!read_string(type_addr, field_type, 128))
-			goto out_fail;
+		if (!read_string(name_addr, field_name, 128)) {
+			strcpy(field_name,"dummy_name");
+		}
+		if (!read_string(type_addr, field_type, 128)) {
+			strcpy(field_name,"dummy_type");
+		}
+
+		if (CRASHDEBUG(8)) {
+			fprintf(fp,"name <%s>  type <%s> \n",field_name, field_type);
+		}
 
 		/* Enlarge fields array when need */
 		if (nfields >= max_fields) {
@@ -1902,7 +1926,7 @@ static int tmp_file_record_size4(int fd)
 
 	if (tmp_file_error)
 		return -1;
-	if (write_and_check(fd, &size, 4))
+	if (write32(fd, size))
 		return -1;
 	return 0;
 }
@@ -1911,7 +1935,7 @@ static int tmp_file_record_size8(int fd)
 {
 	if (tmp_file_error)
 		return -1;
-	if (write_and_check(fd, &tmp_file_pos, 8))
+	if (write64(fd, tmp_file_pos))
 		return -1;
 	return 0;
 }
@@ -1944,6 +1968,9 @@ static int save_initial_data(int fd)
 	else
 		buf[0] = 0;
 
+	if(NEED_SWAP())
+		buf[0] ^= 1;
+
 	if (write_and_check(fd, buf, 1))
 		return -1;
 
@@ -1953,7 +1980,7 @@ static int save_initial_data(int fd)
 		return -1;
 
 	page_size = PAGESIZE();
-	if (write_and_check(fd, &page_size, 4))
+	if (write32(fd, page_size))
 		return -1;
 
 	return 0;
@@ -2082,7 +2109,7 @@ static int save_system_files(int fd, int *system_ids, int system_id)
 			total++;
 	}
 
-	if (write_and_check(fd, &total, 4))
+	if (write32(fd, total))
 		return -1;
 
 	for (i = 0; i < nr_event_types; i++) {
@@ -2131,7 +2158,7 @@ static int save_events_files(int fd)
 
 	/* other systems events */
 	nr_systems = system_id - 2;
-	if (write_and_check(fd, &nr_systems, 4))
+	if (write32(fd, nr_systems))
 		goto fail;
 	for (system_id = 2; system_id < nr_systems + 2; system_id++) {
 		for (i = 0; i < nr_event_types; i++) {
@@ -2302,7 +2329,7 @@ static int save_ftrace_printk(int fd)
  out:
 	if (count == 0) {
 		unsigned int size = 0;
-		return write_and_check(fd, &size, 4);
+		return write32(fd, size);
 	}
 	if (tmp_file_record_size4(fd))
 		return -1;
@@ -2370,12 +2397,17 @@ static int write_options(int fd, unsigned long long *buffer_offsets)
 	return 0;
 }
 
-static int save_res_data(int fd, int nr_cpu_buffers, unsigned long long *buffer_offsets)
+static int save_res_data(int fd, int nr_cpu_buffers)
 {
-	if (write_and_check(fd, &nr_cpu_buffers, 4))
+	unsigned short option = 0;
+
+	if (write32(fd, nr_cpu_buffers))
 		return -1;
 
-	if (write_options(fd, buffer_offsets))
+	if (write_and_check(fd, "options  ", 10))
+		return -1;
+
+	if (write_and_check(fd, &option, 2))
 		return -1;
 
 	if (write_and_check(fd, "flyrecord", 10))
@@ -2383,6 +2415,7 @@ static int save_res_data(int fd, int nr_cpu_buffers, unsigned long long *buffer_
 
 	return 0;
 }
+
 
 static int save_record_data(int fd, int nr_cpu_buffers, struct trace_instance *ti)
 {
@@ -2403,9 +2436,9 @@ static int save_record_data(int fd, int nr_cpu_buffers, struct trace_instance *t
 			continue;
 
 		buffer_size = PAGESIZE() * cpu_buffer->nr_linear_pages;
-		if (write_and_check(fd, &buffer_offset, 8))
+		if (write64(fd, buffer_offset))
 			return -1;
-		if (write_and_check(fd, &buffer_size, 8))
+		if (write64(fd, buffer_size))
 			return -1;
 		buffer_offset += buffer_size;
 	}

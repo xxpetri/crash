@@ -73,7 +73,8 @@ static struct option long_options[] = {
 	{"hash", required_argument, 0, 0},
 	{"offline", required_argument, 0, 0},
 	{"src", required_argument, 0, 0},
-        {0, 0, 0, 0}
+    {"endian", 0, 0, 0},						/* Nathan */
+    {0, 0, 0, 0}
 };
 
 int
@@ -294,7 +295,10 @@ main(int argc, char **argv)
 					program_usage(SHORT_FORM);
 				}
 			}
-
+            else if (STREQ(long_options[option_index].name, "endian")) {		/* Nathan */
+                    pc->flags2 |= ENDIAN_DIFF;									/* Nathan */
+					printf("ENDIAN DIFF is set\n");								/* Karlo */
+            }
 			else if (STREQ(long_options[option_index].name, "src"))
 				kt->source_tree = optarg;
 
