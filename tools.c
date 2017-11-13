@@ -6231,42 +6231,58 @@ endian_mismatch(char *file, char dumpfile_endian, ulong query)
 }
 
 uint16_t
-swap16(uint16_t val, int swap)
+__swap16(uint16_t val)
 {
-	if (swap) 
         	return (((val & 0x00ff) << 8) |
                 	((val & 0xff00) >> 8));
-	else
-		return val;
+}
+
+uint16_t
+swap16(uint16_t val, int swap) 
+{	if (swap)
+		return __swap16(val);
+	return val;
 }
 
 uint32_t
-swap32(uint32_t val, int swap)
+__swap32(uint32_t val)
 {
-	if (swap)
         	return (((val & 0x000000ffU) << 24) |
                 	((val & 0x0000ff00U) <<  8) |
                 	((val & 0x00ff0000U) >>  8) |
                 	((val & 0xff000000U) >> 24));
-	else
-		return val;
 }
 
-uint64_t
-swap64(uint64_t val, int swap)
+uint32_t
+swap32(uint32_t val, int swap) 
 {
 	if (swap)
-		return (((val & 0x00000000000000ffULL) << 56) |
-			((val & 0x000000000000ff00ULL) << 40) |
-			((val & 0x0000000000ff0000ULL) << 24) |
-			((val & 0x00000000ff000000ULL) <<  8) |
-			((val & 0x000000ff00000000ULL) >>  8) |
-			((val & 0x0000ff0000000000ULL) >> 24) |
-			((val & 0x00ff000000000000ULL) >> 40) |
-			((val & 0xff00000000000000ULL) >> 56));
-	else
-		return val;
+		return __swap32(val);
+	return val;
 }
+
+uint64_t												/* Nathan */
+__swap64(uint64_t val)									/* Nathan */
+{														/* Nathan */
+	return (((val & 0x00000000000000ffULL) << 56) |		/* Nathan */
+		((val & 0x000000000000ff00ULL) << 40) |			/* Nathan */
+		((val & 0x0000000000ff0000ULL) << 24) |			/* Nathan */
+		((val & 0x00000000ff000000ULL) <<  8) |			/* Nathan */
+		((val & 0x000000ff00000000ULL) >>  8) |			/* Nathan */
+		((val & 0x0000ff0000000000ULL) >> 24) |			/* Nathan */
+		((val & 0x00ff000000000000ULL) >> 40) |			/* Nathan */
+		((val & 0xff00000000000000ULL) >> 56));			/* Nathan */
+}														/* Nathan */
+
+uint64_t												/* Nathan */
+swap64(uint64_t val, int swap)							/* Nathan */
+{														/* Nathan */
+	if( swap )	{										/* Nathan */
+		return __swap64(val);							/* Nathan */
+	}
+	else 												/* Nathan */
+		return val;										/* Nathan */
+}														/* Nathan */
 
 /*
  *  Get a sufficiently large buffer for cpumask.
@@ -6492,4 +6508,142 @@ rb_last(struct rb_root *root)
 	}
 
 	return node;
+}
+
+void swap_Elf32_Phdr(void* h, int swap)							/* Nathan */
+{																/* Nathan */
+	Elf32_Phdr* hdr = (Elf32_Phdr*)h;							/* Nathan */
+	if(swap)													/* Nathan */
+	{															/* Nathan */
+		hdr->p_type = swap32(hdr->p_type, swap);				/* Nathan */
+		hdr->p_offset = swap32(hdr->p_offset, swap);			/* Nathan */
+		hdr->p_vaddr = swap32(hdr->p_vaddr, swap);				/* Nathan */
+		hdr->p_paddr = swap32(hdr->p_paddr, swap);				/* Nathan */
+		hdr->p_filesz = swap32(hdr->p_filesz, swap);			/* Nathan */
+		hdr->p_memsz = swap32(hdr->p_memsz, swap);				/* Nathan */
+		hdr->p_flags = swap32(hdr->p_flags, swap);				/* Nathan */
+		hdr->p_align = swap32(hdr->p_align, swap);				/* Nathan */
+	}															/* Nathan */
+}																/* Nathan */
+
+void swap_Elf32_Nhdr(void* h, int swap)							/* Nathan */
+{																/* Nathan */
+	Elf32_Nhdr* hdr = (Elf32_Nhdr*)h;							/* Nathan */
+	if(swap)                                                    /* Nathan */
+	{                                                           /* Nathan */
+		hdr->n_namesz = swap32(hdr->n_namesz, swap);            /* Nathan */
+		hdr->n_descsz = swap32(hdr->n_descsz, swap);            /* Nathan */
+		hdr->n_type = swap32(hdr->n_type, swap);                /* Nathan */
+	}                                                           /* Nathan */
+}                                                               /* Nathan */
+                                                                /* Nathan */
+void swap_Elf64_Ehdr(void* h, int swap)                         /* Nathan */
+{                                                               /* Nathan */
+       Elf64_Ehdr* hdr = (Elf64_Ehdr*)h;                        /* Nathan */
+       if (swap)                                                /* Nathan */
+       {                                                        /* Nathan */
+              hdr->e_type = swap16(hdr->e_type, swap);          /* Nathan */
+              hdr->e_machine = swap16(hdr->e_machine, swap);	/* Nathan */
+              hdr->e_version = swap32(hdr->e_version, swap);    /* Nathan */
+              hdr->e_entry = swap64(hdr->e_entry, swap);        /* Nathan */
+              hdr->e_phoff = swap64(hdr->e_phoff, swap);        /* Nathan */
+              hdr->e_shoff = swap64(hdr->e_shoff, swap);        /* Nathan */
+              hdr->e_flags = swap32(hdr->e_flags, swap);        /* Nathan */
+              hdr->e_ehsize = swap16(hdr->e_ehsize, swap);      /* Nathan */
+              hdr->e_phentsize = swap16(hdr->e_phentsize, swap);/* Nathan */
+              hdr->e_phnum = swap16(hdr->e_phnum, swap);        /* Nathan */
+              hdr->e_shentsize = swap16(hdr->e_shentsize, swap);/* Nathan */
+              hdr->e_shnum = swap16(hdr->e_shnum, swap);        /* Nathan */
+              hdr->e_shstrndx = swap16(hdr->e_shstrndx, swap);  /* Nathan */
+       }                                                        /* Nathan */
+}                                                               /* Nathan */
+                                                                /* Nathan */
+void swap_Elf64_Phdr(void* h, int swap)							/* Nathan */
+{                                                               /* Nathan */
+       Elf64_Phdr* hdr = (Elf64_Phdr*)h;                        /* Nathan */
+       if(swap)                                                 /* Nathan */
+       {                                                        /* Nathan */
+              hdr->p_type = swap32(hdr->p_type, swap);          /* Nathan */
+              hdr->p_flags = swap32(hdr->p_flags, swap);        /* Nathan */
+              hdr->p_offset = swap64(hdr->p_offset, swap);      /* Nathan */
+              hdr->p_vaddr = swap64(hdr->p_vaddr, swap);        /* Nathan */
+              hdr->p_paddr = swap64(hdr->p_paddr, swap);        /* Nathan */
+              hdr->p_filesz = swap64(hdr->p_filesz, swap);      /* Nathan */
+              hdr->p_memsz = swap64(hdr->p_memsz, swap);        /* Nathan */
+              hdr->p_align = swap64(hdr->p_align, swap);        /* Nathan */
+       }                                                        /* Nathan */
+}                                                               /* Nathan */
+																/* Nathan */
+void swap_Elf64_Nhdr(void* h, int swap)                         /* Nathan */
+{                                                               /* Nathan */
+    swap_Elf32_Nhdr(h, swap);                                   /* Nathan */
+}                                                               /* Nathan */
+
+unsigned long next_KMOD_V1(unsigned long mod, char* modbuf)
+{
+	return ULONG(modbuf + OFFSET(module_next));   
+}
+
+unsigned long next_KMOD_V2(unsigned long mod, char* modbuf)
+{
+	char* mod_next_helper = modbuf + OFFSET(module_list);   
+	*((unsigned long *)mod_next_helper) = EULONG( (unsigned long *) mod_next_helper);
+	if (CRASHDEBUG(8))
+		printf("mod_next_helper %lx swapped \n", *(unsigned long *)mod_next_helper);
+	mod = ULONG(mod_next_helper);
+    if (mod != kt->kernel_module)                
+            mod -= OFFSET(module_list);          
+	return mod;
+}
+
+
+
+unsigned long next_module(unsigned long current_mod, char * modbuf)
+{
+	switch (kt->flags & (KMOD_V1|KMOD_V2))                       
+    {                                                            
+    case KMOD_V1:                                                
+            return next_KMOD_V1(current_mod, modbuf);
+    case KMOD_V2:                                                
+			return next_KMOD_V2(current_mod, modbuf);
+    }
+}
+
+
+void
+__swap_size(void* buf, size_t sz, int strict )
+{
+	switch(sz) {
+		case SIZEOF_64BIT:
+			*(uint64_t*)buf = __swap64(*(uint64_t*)buf);
+			break;
+		case SIZEOF_32BIT:
+			*(uint32_t*)buf = __swap32(*(uint32_t*)buf);
+			break;
+		case SIZEOF_16BIT:
+			*(uint16_t*)buf = __swap16(*(uint16_t*)buf);
+			break;
+		default:
+			if( strict )
+				error(FATAL, "unhandled swap size: %d!\n", sz);
+			break;
+	}
+}
+
+void
+swap_size(void* buf, size_t sz, int swap, int strict )
+{
+	if( swap )
+		__swap_size(buf, sz, strict);
+}
+
+
+void
+swap_array(void* buf, size_t sz, int swap, int strict, long count )
+{
+	long i;
+	if( swap ) {
+		for( i = 0; i < count; i++ )
+			__swap_size((char*)buf+(i*sz), sz, strict);
+	}
 }

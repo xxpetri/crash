@@ -3069,14 +3069,14 @@ get_pathname(ulong dentry, char *pathname, int length, int full, ulong vfsmnt)
 
 		dentry_buf = fill_dentry_cache(tmp_dentry);
 
-		d_name_len = INT(dentry_buf +
-			OFFSET(dentry_d_name) + OFFSET(qstr_len));
+		d_name_len = EINT(&(INT(dentry_buf +
+			OFFSET(dentry_d_name) + OFFSET(qstr_len))));
 
 		if (!d_name_len) 
 			break;
 
-		d_name_name = ULONG(dentry_buf + OFFSET(dentry_d_name) 
-			+ OFFSET(qstr_name));
+		d_name_name = EULONG(&(ULONG(dentry_buf + OFFSET(dentry_d_name) 
+			+ OFFSET(qstr_name))));
 
 		if (!d_name_name)
 			break;
@@ -3101,7 +3101,7 @@ get_pathname(ulong dentry, char *pathname, int length, int full, ulong vfsmnt)
 			strncpy(pathname, buf, BUFSIZE);
 		}
 
-		parent = ULONG(dentry_buf + OFFSET(dentry_d_parent)); 
+		parent = EULONG(&(ULONG(dentry_buf + OFFSET(dentry_d_parent)))); 
 			
 		if (tmp_dentry == parent && full) {
 			if (VALID_MEMBER(vfsmount_mnt_mountpoint)) {
@@ -3112,10 +3112,10 @@ get_pathname(ulong dentry, char *pathname, int length, int full, ulong vfsmnt)
 						SIZE(vfsmount), 
 						"vfsmount buffer", 
 						FAULT_ON_ERROR);
-        				parent = ULONG(vfsmnt_buf + 
-					    OFFSET(vfsmount_mnt_mountpoint));
-        				mnt_parent = ULONG(vfsmnt_buf + 
-					    OFFSET(vfsmount_mnt_parent));
+        				parent = EULONG(&(ULONG(vfsmnt_buf + 
+					    OFFSET(vfsmount_mnt_mountpoint))));
+        				mnt_parent = EULONG(&(ULONG(vfsmnt_buf + 
+					    OFFSET(vfsmount_mnt_parent))));
 					if (tmp_vfsmnt == mnt_parent)
 						break;
 					else
@@ -3130,10 +3130,10 @@ get_pathname(ulong dentry, char *pathname, int length, int full, ulong vfsmnt)
 						SIZE(mount), 
 						"mount buffer", 
 						FAULT_ON_ERROR);
-        				parent = ULONG(mnt_buf + 
-					    OFFSET(mount_mnt_mountpoint));
-        				mnt_parent = ULONG(mnt_buf + 
-					    OFFSET(mount_mnt_parent));
+        				parent = EULONG(&(ULONG(mnt_buf + 
+					    OFFSET(mount_mnt_mountpoint))));
+        				mnt_parent = EULONG(&(ULONG(mnt_buf + 
+					    OFFSET(mount_mnt_parent))));
 					if ((tmp_vfsmnt - OFFSET(mount_mnt)) == mnt_parent)
 						break;
 					else
@@ -3240,6 +3240,7 @@ fill_dentry_cache(ulong dentry)
 {
 	int i;
 	char *cache;
+	unsigned long * tmp;
 
 	ft->dentry_cache_fills++;
 
@@ -3255,7 +3256,10 @@ fill_dentry_cache(ulong dentry)
 
         readmem(dentry, KVADDR, cache, SIZE(dentry),
         	"fill_dentry_cache", FAULT_ON_ERROR);
-
+		
+	tmp=(unsigned long *)cache;
+	*tmp=EULONG(tmp);
+	
 	ft->cached_dentry[ft->dentry_cache_index] = dentry;
 
 	ft->dentry_cache_index = (ft->dentry_cache_index+1) % DENTRY_CACHE;

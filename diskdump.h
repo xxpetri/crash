@@ -26,6 +26,8 @@
 #define SIG_LEN (sizeof(DUMP_PARTITION_SIGNATURE) - 1)
 #define DISK_DUMP_SIGNATURE		"DISKDUMP"
 #define KDUMP_SIGNATURE			"KDUMP   "
+#define KDUMP_LE_SIGNATURE      "KDUMPLE "			/* Nathan */
+#define KDUMP_BE_SIGNATURE      "KDUMPBE "			/* Nathan */
 
 #define DUMP_HEADER_COMPLETED	0
 #define DUMP_HEADER_INCOMPLETED 1

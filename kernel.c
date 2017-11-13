@@ -2900,9 +2900,11 @@ back_trace(struct bt_info *bt)
 
 	fill_stackbuf(bt);
 
-	if (CRASHDEBUG(4)) {
-		for (i = 0, up = (ulong *)bt->stackbuf; 
-		     i < LONGS_PER_STACK; i++, up++) {
+
+	for (i = 0, up = (ulong *)bt->stackbuf; 
+	     i < LONGS_PER_STACK; i++, up++) {
+		if (CRASHDEBUG(4)) {
+			// fprintf(fp,"bt->stackbuf up %p, cont: %lx\n ",up,*up );
 			if (is_kernel_text(*up))
 				fprintf(fp, "%lx: %s\n", 
 					tt->flags & THREAD_INFO ?
@@ -3400,7 +3402,8 @@ module_init(void)
 	struct syment *sp, *sp_array[10];
 	struct kernel_list_head list;
 	int modules_found;
-
+	char * mod_next_helper;
+	
 	if (kernel_symbol_exists("module_list")) 
 		kt->flags |= KMOD_V1;
 	else if (kernel_symbol_exists("modules"))
@@ -3567,6 +3570,11 @@ module_init(void)
 				UINT(modbuf + OFFSET(module_num_gpl_syms));
 			break;
 		}
+		
+		
+		nsyms = EINT(&nsyms);
+		if (CRASHDEBUG(8))
+			fprintf(fp,"swapping nsyms %08x\n", nsyms);
 
 		total += nsyms;
 		total += 2;  /* store the module's start/ending addresses */
@@ -3617,13 +3625,17 @@ module_init(void)
 				return;
 			}
 
+			numksyms=EULONG(&numksyms);
+			size=EULONG(&size);
+			if (CRASHDEBUG(8))
+				printf("numksys %ld size %lx is now\n",numksyms,size);
 			total += numksyms; 
 			break;
 		}
 
 		kt->mods_installed++;
 
-		NEXT_MODULE(mod_next, modbuf);
+		mod_next=next_module(mod_next,modbuf);
 	}
 
         FREEBUF(modbuf);
@@ -3759,7 +3771,7 @@ irregularity:
 
 		mods_installed++;
 
-		NEXT_MODULE(mod_next, modbuf);
+		mod_next=next_module(mod_next, modbuf);
 	}
 
         FREEBUF(modbuf);
@@ -4994,7 +5006,7 @@ log_from_idx(uint32_t idx, char *logbuf)
 	 * the buffer.
 	 */
 
-	msglen = USHORT(logptr + OFFSET(log_len));
+	msglen = EUSHORT(&(USHORT(logptr + OFFSET(log_len))));
 	if (!msglen)
 		logptr = logbuf;
 
@@ -5018,9 +5030,9 @@ log_next(uint32_t idx, char *logbuf)
 	 * return the one after that.
 	 */
 
-	msglen = USHORT(logptr + OFFSET(log_len));
+	msglen = EUSHORT(&(USHORT(logptr + OFFSET(log_len))));
 	if (!msglen) {
-		msglen = USHORT(logbuf + OFFSET(log_len));
+		msglen = EUSHORT(&(USHORT(logbuf + OFFSET(log_len))));
 		return msglen;
 	}
 
@@ -5041,22 +5053,27 @@ dump_log_entry(char *logptr, int msg_flags)
 
 	ilen = level = 0;
 	text_len = USHORT(logptr + OFFSET(log_text_len));
-	dict_len = USHORT(logptr + OFFSET(log_dict_len));
+	text_len = EUSHORT(&text_len);
+	dict_len = EUSHORT(&(USHORT(logptr + OFFSET(log_dict_len))));
+	dict_len = EUSHORT(&dict_len);
 	if (VALID_MEMBER(log_level)) {
 		/*
 		 *  Initially a "u16 level", then a "u8 level:3"
 		 */
-		if (SIZE(log_level) == sizeof(short))
+		if (SIZE(log_level) == sizeof(short)) {
 			level = USHORT(logptr + OFFSET(log_level));
-		else
+			level = EUSHORT(&level);
+		} else {
 			level = UCHAR(logptr + OFFSET(log_level));
+		}
 	} else {
-		if (VALID_MEMBER(log_flags_level))
+		if (VALID_MEMBER(log_flags_level)) {
 			level = UCHAR(logptr + OFFSET(log_flags_level));
+		}
 		else if (msg_flags & SHOW_LOG_LEVEL)
 			msg_flags &= ~SHOW_LOG_LEVEL;
 	}
-	ts_nsec = ULONGLONG(logptr + OFFSET(log_ts_nsec));
+	ts_nsec = EULONGLONG(&(ULONGLONG(logptr + OFFSET(log_ts_nsec))));
 
 	msg = logptr + SIZE(log);
 
@@ -5120,9 +5137,11 @@ dump_variable_length_record_log(int msg_flags)
 	uint32_t idx, log_first_idx, log_next_idx, log_buf_len;
 	ulong log_buf;
 	char *logptr, *logbuf, *log_struct_name;
-
+	unsigned long  * swap;
+	int i=0;
+	
 	if (INVALID_SIZE(log)) {
-		if (STRUCT_EXISTS("printk_log")) {
+		if (STRUCT_EXISTS("printk_log") ) {
 			/*
 			 * In kernel 3.11 the log structure name was renamed
 			 * from log to printk_log.  See 62e32ac3505a0cab.
@@ -5144,7 +5163,7 @@ dump_variable_length_record_log(int msg_flags)
 		 * If things change, don't kill a dumpfile session 
 		 * searching for a panic message.
 		 */
-		if (INVALID_SIZE(log) ||
+		if ( INVALID_SIZE(log) || 
 		    INVALID_MEMBER(log_ts_nsec) ||
 		    INVALID_MEMBER(log_len) ||
 		    INVALID_MEMBER(log_text_len) ||
@@ -5177,7 +5196,7 @@ dump_variable_length_record_log(int msg_flags)
 		FREEBUF(logbuf);
 		return;
 	}
-
+	
 	hq_open();
 
 	idx = log_first_idx;
@@ -5574,9 +5593,9 @@ get_loadavg(char *buf)
         readmem(symbol_value("avenrun"), KVADDR, &avenrun[0],
                 sizeof(long)*3, "avenrun array", FAULT_ON_ERROR);
 
-        a = avenrun[0] + (FIXED_1/200);
-        b = avenrun[1] + (FIXED_1/200);
-        c = avenrun[2] + (FIXED_1/200);
+        a = (ELONG(&(avenrun[0]))) + (FIXED_1/200);
+        b = (ELONG(&(avenrun[1]))) + (FIXED_1/200);
+        c = (ELONG(&(avenrun[2]))) + (FIXED_1/200);
         sprintf(buf, "%d.%02d, %d.%02d, %d.%02d",
                 LOAD_INT(a), LOAD_FRAC(a),
                 LOAD_INT(b), LOAD_FRAC(b),

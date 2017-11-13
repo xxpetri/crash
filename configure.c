@@ -146,6 +146,7 @@ void add_extra_lib(char *);
 #define TARGET_CFLAGS_ARM_ON_X86_64  "TARGET_CFLAGS=-m32 -D_FILE_OFFSET_BITS=64"
 #define TARGET_CFLAGS_X86_ON_X86_64  "TARGET_CFLAGS=-m32 -D_FILE_OFFSET_BITS=64"
 #define TARGET_CFLAGS_PPC_ON_PPC64   "TARGET_CFLAGS=-m32 -D_FILE_OFFSET_BITS=64 -fPIC"
+#define TARGET_CFLAGS_PPC_ON_X86_64   "TARGET_CFLAGS=-m32 -D_FILE_OFFSET_BITS=64 -fPIC"
 #define TARGET_CFLAGS_ARM64            "TARGET_CFLAGS="
 #define TARGET_CFLAGS_ARM64_ON_X86_64  "TARGET_CFLAGS="
 #define TARGET_CFLAGS_PPC64_ON_X86_64  "TARGET_CFLAGS="
@@ -159,6 +160,8 @@ void add_extra_lib(char *);
 #define GDB_TARGET_ARM_ON_X86_64  "GDB_CONF_FLAGS=--target=arm-elf-linux CFLAGS=-m32"
 #define GDB_TARGET_X86_ON_X86_64  "GDB_CONF_FLAGS=--target=i686-pc-linux-gnu CFLAGS=-m32"
 #define GDB_TARGET_PPC_ON_PPC64   "GDB_CONF_FLAGS=--target=ppc-elf-linux CFLAGS=-m32"
+/** #define GDB_TARGET_PPC_ON_X86_64   "GDB_CONF_FLAGS=--target=ppc-elf-linux CFLAGS=-m32" **/
+#define GDB_TARGET_PPC_ON_X86_64   "GDB_CONF_FLAGS=--target=powerpc-elf-linux CFLAGS=-m32"
 #define GDB_TARGET_ARM64_ON_X86_64  "GDB_CONF_FLAGS=--target=aarch64-elf-linux"   /* TBD */
 #define GDB_TARGET_PPC64_ON_X86_64  "GDB_CONF_FLAGS=--target=powerpc64le-unknown-linux-gnu"
 #define GDB_TARGET_MIPS_ON_X86     "GDB_CONF_FLAGS=--target=mipsel-elf-linux"
@@ -391,7 +394,8 @@ get_current_configuration(struct supported_gdb_version *sp)
         /* 
 	 * Override target if specified on command line.
 	 */
-	target_data.host = target_data.target;
+	/* target_data.host = target_data.target; */
+	target_data.host = X86_64;
 
 	if (target_data.target_as_param) {
 		if ((target_data.target == X86 || target_data.target == X86_64) &&
@@ -409,6 +413,14 @@ get_current_configuration(struct supported_gdb_version *sp)
 			 *  32-bit executable.
 			 */
 			target_data.target = MIPS;
+                } else if ((target_data.target == X86 || target_data.target == X86_64) &&
+                           (name_to_target((char *)target_data.target_as_param) == PPC)) {
+                        /*
+                         *  Debugging of PPC big-endian ??? core files
+                         *  supported on X86, and on X86_64 when built as a
+                         *  32-bit executable.
+                         */
+                        target_data.target = PPC;
 		} else if ((target_data.target == X86_64) &&
 			(name_to_target((char *)target_data.target_as_param) == X86)) {
 			/*
@@ -667,6 +679,7 @@ build_configure(struct supported_gdb_version *sp)
 	target = target_CFLAGS = NULL;
 
 	gdb_conf_flags = GDB_TARGET_DEFAULT;
+
 	switch (target_data.target)
 	{
 	case X86:
@@ -686,7 +699,10 @@ build_configure(struct supported_gdb_version *sp)
 		if (target_data.host == PPC64) {
                         target_CFLAGS = TARGET_CFLAGS_PPC_ON_PPC64;
 			gdb_conf_flags = GDB_TARGET_PPC_ON_PPC64;
-		} else
+		} else if (target_data.host == X86_64) {
+                        target_CFLAGS = TARGET_CFLAGS_PPC_ON_X86_64;
+                        gdb_conf_flags = GDB_TARGET_PPC_ON_X86_64;
+                } else
 			target_CFLAGS = TARGET_CFLAGS_PPC;
 		break;
 	case IA64:

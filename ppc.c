@@ -8,12 +8,12 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
- *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- */ 
+ */       
+#define PPC                      /* KP added for QT creator only */
 #ifdef PPC
 #include "defs.h"
 #include <elf.h>
@@ -77,6 +77,8 @@ static int probe_default_platform(char *);
 static int probe_ppc44x_platform(char *);
 static int probe_ppce500_platform(char *);
 static void ppc_probe_base_platform(void);
+
+static void ppc_cputime_to_timeval(ulonglong, struct timeval*);
 
 typedef int (*probe_func_t) (char *);
 
@@ -240,6 +242,7 @@ probe_ppce500_platform(char *name)
 static int
 probe_default_platform(char *name)
 {
+
 	if (IS_PAE()) {
 		error(INFO, "platform \"%s\" 64bit PTE fall through\n", name);
 		error(INFO, "vmalloc translation could not work!\n");
@@ -340,7 +343,8 @@ ppc_init(int when)
 		machdep->get_smp_cpus = ppc_get_smp_cpus;
 		machdep->line_number_hooks = ppc_line_number_hooks;
 		machdep->value_to_symbol = generic_machdep_value_to_symbol;
-                machdep->init_kernel_pgd = NULL;
+		machdep->init_kernel_pgd = NULL;
+		machdep->cputime_to_timeval = ppc_cputime_to_timeval;
 
 		break;
 
@@ -401,6 +405,21 @@ ppc_init(int when)
 					&machdep->nr_irqs);
 		else
 			machdep->nr_irqs = 512; /* NR_IRQS (at least) */
+		
+		ulong tb_ticks_per_jiffy;
+		if(symbol_exists("tb_ticks_per_sec")) {
+			get_symbol_data("tb_ticks_per_sec", sizeof(ulong),
+				&machdep->machspec->tb_ticks_per_sec);
+		
+			if(symbol_exists("tb_ticks_per_jiffy")) {
+				get_symbol_data("tb_ticks_per_jiffy",
+						sizeof(ulong),
+						&tb_ticks_per_jiffy);
+				machdep->hz =machdep->machspec->tb_ticks_per_sec / tb_ticks_per_jiffy;
+			}
+		}
+		
+		
 		if (!machdep->hz) {
 			machdep->hz = HZ;
 			if (THIS_KERNEL_VERSION >= LINUX(2,6,0))
@@ -557,14 +576,23 @@ ppc_pgd_vtop(ulong *pgd, ulong vaddr, physaddr_t *paddr, int verbose)
 	}
 
 	page_table = pgd_pte;
+	
+	page_table= EULONG(&page_table);
+	if (CRASHDEBUG(8))
+		fprintf(fp,"page table is now %08lx\n",page_table);
+		
 	if (IS_BOOKE())
 		page_table = VTOP(page_table);
 
         FILL_PTBL(PAGEBASE((ulong)page_table), PHYSADDR, PAGESIZE());
 	pte_index = (vaddr >> PAGE_SHIFT) & (PTRS_PER_PTE - 1);
-	if (IS_PAE())
+	if (IS_PAE()) {
 		pte = ULONGLONG(machdep->ptbl + PTE_SIZE * pte_index);
-
+		if (NEED_SWAP() ) 
+			pte = EULONGLONG(&pte);
+		if (CRASHDEBUG(8))
+			fprintf(fp,"pte is now %llx\n",pte);
+	}
 	else
 	        pte = ULONG(machdep->ptbl + PTE_SIZE * pte_index);
 
@@ -608,6 +636,7 @@ ppc_uvtop(struct task_context *tc, ulong vaddr, physaddr_t *paddr, int verbose)
 {
 	ulong mm, active_mm;
 	ulong *pgd;
+	ulong tmp;
 
 	if (!tc)
 		error(FATAL, "current context invalid\n");
@@ -634,10 +663,13 @@ ppc_uvtop(struct task_context *tc, ulong vaddr, physaddr_t *paddr, int verbose)
 				"mm_struct pgd", FAULT_ON_ERROR);
 		}
         } else {
-                if ((mm = task_mm(tc->task, TRUE)))
+                if ((mm = task_mm(tc->task, TRUE))) {
                         pgd = ULONG_PTR(tt->mm_struct +
                                 OFFSET(mm_struct_pgd));
-                else
+						tmp = (unsigned long) pgd;
+						tmp=EULONG(&tmp);
+						pgd=(unsigned long *)tmp;
+                } else
 			readmem(tc->mm_struct + OFFSET(mm_struct_pgd), 
 				KVADDR, &pgd, sizeof(long), "mm_struct pgd", 
 				FAULT_ON_ERROR);
@@ -1143,6 +1175,10 @@ ppc_back_trace(struct gnu_request *req, struct bt_info *bt)
 			readmem(req->sp + STACK_FRAME_OVERHEAD, KVADDR, &regs,
 				sizeof(struct ppc_pt_regs),
 				"exception frame", FAULT_ON_ERROR);
+			
+			/* swap regs */
+			swap_array(&regs,sizeof(long),NEED_SWAP(),STRICT_SWAP,sizeof(regs)/sizeof(long));
+			
 			efrm_str = ppc_check_eframe(&regs);
 			if (efrm_str) {
 				ppc_print_eframe(efrm_str, &regs, bt);
@@ -1158,6 +1194,37 @@ ppc_back_trace(struct gnu_request *req, struct bt_info *bt)
 		req->pc = newpc;
 		req->sp = newsp;
 		frame++;
+		
+		if(IS_UVADDR(req->sp,0)) {
+				fprintf(fp, "Switching to user space stack (no more symbol info).\n");
+				req->name = "(unresolvable symbol)";
+		
+				/* An escape in case something is really messed up: */
+				for(; frame < 100; frame++) {
+		
+					bt->flags |= BT_SAVE_LASTSP;
+					ppc_print_stack_entry(frame, req, req->sp, 0, bt);
+					bt->flags &= ~(ulonglong)BT_SAVE_LASTSP;
+		
+					readmem(req->sp, UVADDR, &req->sp, sizeof(ulong),
+						"stack pointer", FAULT_ON_ERROR);
+		
+					/* an actual valid end of the back-chain! */
+					if(req->sp == 0)
+						break;
+		
+					if(req->sp < req->lastsp) {
+						fprintf(fp,"Next stack pointer (%lx) is not greater than current one (%lx). Aborting.\n",req->sp,req->lastsp);
+						break;
+					}
+		
+					/* get the next program counter */
+					readmem(req->sp+STACK_FRAME_LR_SAVE, UVADDR, &req->pc,
+						sizeof(ulong), "program counter",
+						FAULT_ON_ERROR);
+				}
+			}
+		
 	}
 
 	return;
@@ -1372,22 +1439,48 @@ ppc_print_eframe(char *efrm_str, struct ppc_pt_regs *regs, struct bt_info *bt)
 	fprintf(fp, "\n");
 }
 
+static void swap_pt_regs(struct ppc_pt_regs *pt_regs)
+{
+	int i=0;
+	/* swap pt_regs */
+	for (i=0;i<32;i++) {
+		pt_regs->gpr[i]=EULONG(&(pt_regs->gpr[i]));
+	}
+	pt_regs->nip=EULONG(&(pt_regs->nip));
+	pt_regs->msr=EULONG(&(pt_regs->msr));
+	pt_regs->orig_gpr3=EULONG(&(pt_regs->orig_gpr3));
+	pt_regs->ctr=EULONG(&(pt_regs->ctr));
+	pt_regs->link=EULONG(&(pt_regs->xer));
+	pt_regs->xer=EULONG(&(pt_regs->xer));
+	pt_regs->ccr=EULONG(&(pt_regs->ccr));
+	pt_regs->mq=EULONG(&(pt_regs->mq));
+	pt_regs->trap=EULONG(&(pt_regs->trap));
+	pt_regs->dar=EULONG(&(pt_regs->dar));
+	pt_regs->dsisr=EULONG(&(pt_regs->dsisr));
+	pt_regs->result=EULONG(&(pt_regs->result));
+}
+
 static void
 ppc_kdump_stack_frame(struct bt_info *bt, ulong *nip, ulong *ksp)
 {
 	struct ppc_pt_regs *pt_regs;
+	struct ppc_pt_regs t_regs;
 	unsigned long ip, sp;
+	int i=0;
 
 	ip = sp = 0;
 
-	pt_regs = (struct ppc_pt_regs*)bt->machdep;
+	pt_regs = &t_regs;
+	memcpy(pt_regs,bt->machdep,sizeof(struct ppc_pt_regs));
+
+	swap_pt_regs(pt_regs);
 
 	if (!pt_regs || !(pt_regs->gpr[1])) {
 		fprintf(fp, "0%lx: GPR1 register value(SP) was not saved\n",
 			bt->task);
 		return;
 	}
-
+		
 	sp = pt_regs->gpr[1];
 
 	if (!IS_KVADDR(sp)) {
@@ -1494,6 +1587,9 @@ get_ppc_frame(struct bt_info *bt, ulong *getpc, ulong *getsp)
 	readmem(sp + STACK_FRAME_OVERHEAD, KVADDR, &regs,
 		sizeof(struct ppc_pt_regs),
 		"PPC pt_regs", FAULT_ON_ERROR);
+
+	swap_pt_regs(&regs);
+
 	ip = regs.nip;
 	if (STREQ(closest_symbol(ip), "__switch_to")) {
 		/* NOTE: _switch_to() calls _switch() which
@@ -1999,6 +2095,8 @@ verify_crash_note_in_kernel(int cpu)
 		goto freebuf;
 
 	note32 = (Elf32_Nhdr *)buf;
+    swap_Elf32_Nhdr(note32, NEED_SWAP());			/* Nathan */
+    
 	name = (char *)(note32 + 1);
 	if (note32->n_type != NT_PRSTATUS ||
 	    note32->n_namesz != strlen("CORE") + 1 ||
@@ -2047,4 +2145,15 @@ ppc_relocate_nt_prstatus_percpu(void **nt_prstatus_percpu,
 	}
 	FREEBUF(nt_ptr);
 }
+
+#define TB_TICKS_PER_SECOND (machdep->machspec->tb_ticks_per_sec)
+
+void ppc_cputime_to_timeval(ulonglong cputime, struct timeval *p)
+{
+	ulonglong r = cputime % TB_TICKS_PER_SECOND;
+	p->tv_sec = cputime / TB_TICKS_PER_SECOND;
+	p->tv_usec = (r * 1000000) / TB_TICKS_PER_SECOND;
+}
+
+
 #endif /* PPC */

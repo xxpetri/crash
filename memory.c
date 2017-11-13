@@ -358,6 +358,8 @@ vm_init(void)
 
         MEMBER_OFFSET_INIT(task_struct_mm, "task_struct", "mm");
         MEMBER_OFFSET_INIT(mm_struct_mmap, "mm_struct", "mmap");
+        MEMBER_OFFSET_INIT(mm_struct_arg_start, "mm_struct", "arg_start");
+        MEMBER_OFFSET_INIT(mm_struct_arg_end, "mm_struct", "arg_end");
         MEMBER_OFFSET_INIT(mm_struct_pgd, "mm_struct", "pgd");
 	MEMBER_OFFSET_INIT(mm_struct_rss, "mm_struct", "rss");
 	if (!VALID_MEMBER(mm_struct_rss))
@@ -493,6 +495,13 @@ vm_init(void)
 	MEMBER_OFFSET_INIT(gendisk_major, "gendisk", "major");
 	MEMBER_OFFSET_INIT(gendisk_fops, "gendisk", "fops");
 	MEMBER_OFFSET_INIT(gendisk_disk_name, "gendisk", "disk_name");
+	
+	/* for appcore usage */
+	MEMBER_OFFSET_INIT(mm_struct_map_count, "mm_struct", "map_count");
+	MEMBER_OFFSET_INIT(mm_struct_flags, "mm_struct", "flags");
+	MEMBER_OFFSET_INIT(mm_struct_saved_auxv, "mm_struct", "saved_auxv");	
+	
+	MEMBER_OFFSET_INIT(vm_area_struct_anon_vma,"vm_area_struct","anon_vma");
 
 	STRUCT_SIZE_INIT(block_device, "block_device");
 	STRUCT_SIZE_INIT(address_space, "address_space");
@@ -3648,11 +3657,11 @@ get_vm_flags(char *vma_buf)
 	ulonglong vm_flags = 0;
 
 	if (SIZE(vm_area_struct_vm_flags) == sizeof(short))
-		vm_flags = USHORT(vma_buf + OFFSET(vm_area_struct_vm_flags));
+		vm_flags = EUSHORT(&(USHORT(vma_buf + OFFSET(vm_area_struct_vm_flags))));
 	else if (SIZE(vm_area_struct_vm_flags) == sizeof(long))
-		vm_flags = ULONG(vma_buf+ OFFSET(vm_area_struct_vm_flags));
+		vm_flags = EULONG(&(ULONG(vma_buf+ OFFSET(vm_area_struct_vm_flags))));
 	else if (SIZE(vm_area_struct_vm_flags) == sizeof(long long))
-		vm_flags = ULONGLONG(vma_buf+ OFFSET(vm_area_struct_vm_flags));
+		vm_flags = EULONGLONG(&(ULONGLONG(vma_buf+ OFFSET(vm_area_struct_vm_flags))));
 	else
 		error(INFO, "questionable vm_area_struct.vm_flags size: %d\n",
 			SIZE(vm_area_struct_vm_flags));
@@ -3876,12 +3885,12 @@ vm_area_dump(ulong task, ulong flag, ulong vaddr, struct reference *ref)
 		BZERO(buf1, BUFSIZE);
 		vma_buf = fill_vma_cache(vma);
 
-		vm_mm = ULONG(vma_buf + OFFSET(vm_area_struct_vm_mm));
-		vm_end = ULONG(vma_buf + OFFSET(vm_area_struct_vm_end));
-		vm_next = ULONG(vma_buf + OFFSET(vm_area_struct_vm_next));
-		vm_start = ULONG(vma_buf + OFFSET(vm_area_struct_vm_start));
+		vm_mm = EULONG(&(ULONG(vma_buf + OFFSET(vm_area_struct_vm_mm))));
+		vm_end = EULONG(&(ULONG(vma_buf + OFFSET(vm_area_struct_vm_end))));
+		vm_next = EULONG(&(ULONG(vma_buf + OFFSET(vm_area_struct_vm_next))));
+		vm_start = EULONG(&(ULONG(vma_buf + OFFSET(vm_area_struct_vm_start))));
 		vm_flags = get_vm_flags(vma_buf);
-		vm_file = ULONG(vma_buf + OFFSET(vm_area_struct_vm_file));
+		vm_file = EULONG(&(ULONG(vma_buf + OFFSET(vm_area_struct_vm_file))));
 		
 		if (flag & PRINT_SINGLE_VMA) {
 			if (vma != single_vma)
@@ -3897,13 +3906,13 @@ vm_area_dump(ulong task, ulong flag, ulong vaddr, struct reference *ref)
 
 		if (vm_file && !(flag & VERIFY_ADDR)) {
 			file_buf = fill_file_cache(vm_file);
-			dentry = ULONG(file_buf + OFFSET(file_f_dentry));
+			dentry = EULONG(&(ULONG(file_buf + OFFSET(file_f_dentry))));
 			dentry_buf = NULL;
 			if (dentry) {
 				dentry_buf = fill_dentry_cache(dentry);
 				if (VALID_MEMBER(file_f_vfsmnt)) {
-					vfsmnt = ULONG(file_buf +
-                                		OFFSET(file_f_vfsmnt));
+					vfsmnt = EULONG(&(ULONG(file_buf +
+                                		OFFSET(file_f_vfsmnt))));
 					get_pathname(dentry, buf1, BUFSIZE,
 						1, vfsmnt);
 				} else {
@@ -3912,8 +3921,8 @@ vm_area_dump(ulong task, ulong flag, ulong vaddr, struct reference *ref)
 				}
 			}
 			if ((flag & PRINT_INODES) && dentry) {
-				inode = ULONG(dentry_buf + 
-					OFFSET(dentry_d_inode));
+				inode = EULONG(&(ULONG(dentry_buf +
+					OFFSET(dentry_d_inode))));
 			}
 		}
 
@@ -4566,14 +4575,14 @@ get_task_mem_usage(ulong task, struct task_mem_usage *tm)
 
 			anonpages = tt->anonpages;
 			filepages = tt->filepages;
-			rss += LONG(tt->mm_struct +
+			rss += EULONG(&(LONG(tt->mm_struct +
 				OFFSET(mm_struct_rss_stat) +
 				OFFSET(mm_rss_stat_count) +
-				(filepages * sizeof(long)));
-			rss += LONG(tt->mm_struct +
+				(filepages * sizeof(long)))));
+			rss += EULONG(&(LONG(tt->mm_struct +
 				OFFSET(mm_struct_rss_stat) +
 				OFFSET(mm_rss_stat_count) +
-				(anonpages * sizeof(long)));
+				(anonpages * sizeof(long)))));
 		}
 
 		/* Check whether SPLIT_RSS_COUNTING is enabled */
@@ -4646,8 +4655,8 @@ get_task_mem_usage(ulong task, struct task_mem_usage *tm)
 
 		tm->rss = (unsigned long)rss;
 	}
-        tm->total_vm = ULONG(tt->mm_struct + OFFSET(mm_struct_total_vm));
-        tm->pgd_addr = ULONG(tt->mm_struct + OFFSET(mm_struct_pgd));
+        tm->total_vm = EULONG(&(ULONG(tt->mm_struct + OFFSET(mm_struct_total_vm))));
+        tm->pgd_addr = EULONG(&(ULONG(tt->mm_struct + OFFSET(mm_struct_pgd))));
 
 	if (is_kernel_thread(task) && !tm->rss)
 		return;
@@ -5986,18 +5995,18 @@ dump_mem_map(struct meminfo *mi)
 				goto display_members;
 			}
 
-			flags = ULONG(pcache + OFFSET(page_flags));
+			flags = EULONG(&(ULONG(pcache + OFFSET(page_flags))));
 			if (SIZE(page_flags) == 4)
 				flags &= 0xffffffff;
-			count = UINT(pcache + OFFSET(page_count));
+			count = EUINT(&(UINT(pcache + OFFSET(page_count))));
 
 	                switch (mi->flags)
 			{
 			case GET_ALL:
 			case GET_BUFFERS_PAGES:
 				if (VALID_MEMBER(page_buffers)) {
-					tmp = ULONG(pcache + 
-						OFFSET(page_buffers));
+					tmp = EULONG(&(ULONG(pcache +
+						OFFSET(page_buffers))));
 					if (tmp)
 						buffers++;
 				} else if (THIS_KERNEL_VERSION >= LINUX(2,6,0)) {
@@ -6050,12 +6059,12 @@ dump_mem_map(struct meminfo *mi)
 			page_mapping = VALID_MEMBER(page_mapping);
 
 			if (v22) {
-				inode = ULONG(pcache + OFFSET(page_inode));
-				offset = ULONG(pcache + OFFSET(page_offset));
+				inode = EULONG(&(ULONG(pcache + OFFSET(page_inode))));
+				offset = EULONG(&(ULONG(pcache + OFFSET(page_offset))));
 			} else if (page_mapping) {
-				mapping = ULONG(pcache + 
-					OFFSET(page_mapping));
-				index = ULONG(pcache + OFFSET(page_index));
+				mapping = EULONG(&(ULONG(pcache +
+					OFFSET(page_mapping))));
+				index = EULONG(&(ULONG(pcache + OFFSET(page_index))));
 			}
 	
 			page_not_mapped = phys_not_mapped = FALSE;
@@ -6379,12 +6388,18 @@ page_flags_init_from_pageflag_names(void)
 
 	if (CRASHDEBUG(1))
 		fprintf(fp, "pageflags from pageflag_names: \n");
+	
+	
 
 	for (i = 0; i < len; i++) {
+		
 		mask = ULONG(buffer + (SIZE(trace_print_flags)*i) + 
 			OFFSET(trace_print_flags_mask));		
 		name = VOID_PTR(buffer + (SIZE(trace_print_flags)*i) + 
-			OFFSET(trace_print_flags_name));		
+			OFFSET(trace_print_flags_name));
+		
+		name = (void *)EULONG(&name);
+		mask = EULONG(&mask);
 
 		if ((mask == -1UL) && !name) {   /* Linux 3.5 and earlier */
 			len--;
@@ -8514,10 +8529,10 @@ nr_blockdev_pages(void)
                 readmem(ld->list_ptr[i], KVADDR, block_device_buf, 
 			SIZE(block_device), "block_device buffer", 
 			FAULT_ON_ERROR);
-		inode = ULONG(block_device_buf + OFFSET(block_device_bd_inode));
+		inode = EULONG(&(ULONG(block_device_buf + OFFSET(block_device_bd_inode))));
                 readmem(inode, KVADDR, inode_buf, SIZE(inode), "inode buffer", 
 			FAULT_ON_ERROR);
-		address_space = ULONG(inode_buf + OFFSET(inode_i_mapping));
+		address_space = EULONG(&(ULONG(inode_buf + OFFSET(inode_i_mapping))));
                 readmem(address_space, KVADDR, address_space_buf, 
 			SIZE(address_space), "address_space buffer", 
 			FAULT_ON_ERROR);
@@ -15520,59 +15535,59 @@ dump_swap_info(ulong swapflags, ulong *totalswap_pages, ulong *totalused_pages)
 			fill_swap_info(swap_info);
 
 		if (MEMBER_SIZE("swap_info_struct", "flags") == sizeof(uint))
-			flags = UINT(vt->swap_info_struct +
-				OFFSET(swap_info_struct_flags));
+			flags = EUINT(&(UINT(vt->swap_info_struct +
+				OFFSET(swap_info_struct_flags))));
 		else
-			flags = ULONG(vt->swap_info_struct +
-				OFFSET(swap_info_struct_flags));
+			flags = EULONG(&(ULONG(vt->swap_info_struct +
+				OFFSET(swap_info_struct_flags))));
 
 		if (!(flags & SWP_USED))
 			continue;
 
-		swap_file = ULONG(vt->swap_info_struct + 
-			OFFSET(swap_info_struct_swap_file));
+		swap_file = EULONG(&(ULONG(vt->swap_info_struct +
+			OFFSET(swap_info_struct_swap_file))));
 
-                swap_device = INT(vt->swap_info_struct +
+                swap_device = EINT(&(INT(vt->swap_info_struct +
                         OFFSET_OPTION(swap_info_struct_swap_device, 
-			swap_info_struct_old_block_size));
+			swap_info_struct_old_block_size))));
 
-                pages = INT(vt->swap_info_struct +
-                        OFFSET(swap_info_struct_pages));
+                pages = EINT(&(INT(vt->swap_info_struct +
+                        OFFSET(swap_info_struct_pages))));
 
 		totalswap += pages;
 		pages <<= (PAGESHIFT() - 10);
 		inuse_pages = 0;
 
 		if (MEMBER_SIZE("swap_info_struct", "prio") == sizeof(short))
-			prio = SHORT(vt->swap_info_struct + 
-				OFFSET(swap_info_struct_prio));
+			prio = ESHORT(&(SHORT(vt->swap_info_struct + 
+				OFFSET(swap_info_struct_prio))));
 		else
-			prio = INT(vt->swap_info_struct + 
-				OFFSET(swap_info_struct_prio));
+			prio = EINT(&(INT(vt->swap_info_struct + 
+				OFFSET(swap_info_struct_prio))));
 
 		if (MEMBER_SIZE("swap_info_struct", "max") == sizeof(int))
-			max = UINT(vt->swap_info_struct +
-				OFFSET(swap_info_struct_max));
+			max = EUINT(&(UINT(vt->swap_info_struct +
+				OFFSET(swap_info_struct_max))));
 		else
-			max = ULONG(vt->swap_info_struct +
-				OFFSET(swap_info_struct_max));
+			max = EULONG(&(ULONG(vt->swap_info_struct +
+				OFFSET(swap_info_struct_max))));
 
 		if (VALID_MEMBER(swap_info_struct_inuse_pages)) {
 			if (MEMBER_SIZE("swap_info_struct", "inuse_pages") == sizeof(int))
-				inuse_pages = UINT(vt->swap_info_struct +
-					OFFSET(swap_info_struct_inuse_pages));
+				inuse_pages = EUINT(&(UINT(vt->swap_info_struct +
+					OFFSET(swap_info_struct_inuse_pages))));
 			else
-				inuse_pages = ULONG(vt->swap_info_struct +
-					OFFSET(swap_info_struct_inuse_pages));
+				inuse_pages = EULONG(&(ULONG(vt->swap_info_struct +
+					OFFSET(swap_info_struct_inuse_pages))));
 		}
 
-		swap_map = ULONG(vt->swap_info_struct +
-			OFFSET(swap_info_struct_swap_map));
+		swap_map = EULONG(&(ULONG(vt->swap_info_struct +
+			OFFSET(swap_info_struct_swap_map))));
 
 		if (swap_file) {
 			if (VALID_MEMBER(swap_info_struct_swap_vfsmnt)) {
-                		vfsmnt = ULONG(vt->swap_info_struct +
-                        		OFFSET(swap_info_struct_swap_vfsmnt));
+                		vfsmnt = EULONG(&(ULONG(vt->swap_info_struct +
+                        		OFFSET(swap_info_struct_swap_vfsmnt))));
 				get_pathname(swap_file, buf, BUFSIZE, 
 					1, vfsmnt);
 			} else if (VALID_MEMBER
@@ -16372,23 +16387,23 @@ dump_zone_stats(void)
 			    "zone buffer", FAULT_ON_ERROR))
 				break; 
 
-			value1 = ULONG(zonebuf + 
-				OFFSET_OPTION(zone_struct_name, zone_name));
+			value1 = EULONG(&(ULONG(zonebuf +
+				OFFSET_OPTION(zone_struct_name, zone_name))));
 
                         if (!read_string(value1, buf1, BUFSIZE-1))
                                 sprintf(buf1, "(unknown) ");
 
 			if (VALID_MEMBER(zone_struct_size))
-				value1 = value6 = ULONG(zonebuf + 
-					OFFSET(zone_struct_size));
+				value1 = value6 = EULONG(&(ULONG(zonebuf +
+					OFFSET(zone_struct_size))));
 			else if (VALID_MEMBER(zone_struct_memsize)) {
-				value1 = value6 = ULONG(zonebuf + 
-					OFFSET(zone_struct_memsize));
+				value1 = value6 = EULONG(&(ULONG(zonebuf +
+					OFFSET(zone_struct_memsize))));
 			} else if (VALID_MEMBER(zone_spanned_pages)) {
-				value1 = ULONG(zonebuf + 
-					OFFSET(zone_spanned_pages));
-				value6 = ULONG(zonebuf + 
-					OFFSET(zone_present_pages));
+				value1 = EULONG(&(ULONG(zonebuf +
+					OFFSET(zone_spanned_pages))));
+				value6 = EULONG(&(ULONG(zonebuf +
+					OFFSET(zone_present_pages))));
 			} else error(FATAL, 
 			    	"zone struct has unknown size field\n");
 
@@ -16400,22 +16415,22 @@ dump_zone_stats(void)
 					low = 1;
 					high = 2;
 				}
-				value2 = ULONG(zonebuf + OFFSET(zone_watermark) +
-					(sizeof(long) * min));
-				value3 = ULONG(zonebuf + OFFSET(zone_watermark) +
-					(sizeof(long) * low));
-				value4 = ULONG(zonebuf + OFFSET(zone_watermark) +
-					(sizeof(long) * high));
+				value2 = EULONG(&(ULONG(zonebuf + OFFSET(zone_watermark) +
+					(sizeof(long) * min))));
+				value3 = EULONG(&(ULONG(zonebuf + OFFSET(zone_watermark) +
+					(sizeof(long) * low))));
+				value4 = EULONG(&(ULONG(zonebuf + OFFSET(zone_watermark) +
+					(sizeof(long) * high))));
 			} else {
-				value2 = ULONG(zonebuf + OFFSET_OPTION(zone_pages_min,
-					zone_struct_pages_min));
-				value3 = ULONG(zonebuf + OFFSET_OPTION(zone_pages_low,
-					zone_struct_pages_low));
-				value4 = ULONG(zonebuf + OFFSET_OPTION(zone_pages_high,
-					zone_struct_pages_high));
+				value2 = EULONG(&(ULONG(zonebuf + OFFSET_OPTION(zone_pages_min,
+					zone_struct_pages_min))));
+				value3 = EULONG(&(ULONG(zonebuf + OFFSET_OPTION(zone_pages_low,
+					zone_struct_pages_low))));
+				value4 = EULONG(&(ULONG(zonebuf + OFFSET_OPTION(zone_pages_high,
+					zone_struct_pages_high))));
 			}
-			value5 = ULONG(zonebuf + OFFSET_OPTION(zone_free_pages,
-				zone_struct_free_pages));
+			value5 = EULONG(&(ULONG(zonebuf + OFFSET_OPTION(zone_free_pages,
+				zone_struct_free_pages))));
 
 			fprintf(fp, 
 			    "NODE: %d  ZONE: %d  ADDR: %lx  NAME: \"%s\"\n", 
@@ -16437,10 +16452,10 @@ dump_zone_stats(void)
 
 			if (VALID_MEMBER(zone_nr_active) && 
 			    VALID_MEMBER(zone_nr_inactive)) {
-				value1 = ULONG(zonebuf + 
-					OFFSET(zone_nr_active));
-				value2 = ULONG(zonebuf + 
-					OFFSET(zone_nr_inactive));
+				value1 = EULONG(&(ULONG(zonebuf +
+					OFFSET(zone_nr_active))));
+				value2 = EULONG(&(ULONG(zonebuf +
+					OFFSET(zone_nr_inactive))));
 				fprintf(fp, 
 			    "\n  NR_ACTIVE: %ld  NR_INACTIVE: %ld  FREE: %ld\n",
 					value1, value2, value5); 
@@ -16467,22 +16482,22 @@ dump_zone_stats(void)
 			}
 
 			if (VALID_MEMBER(zone_all_unreclaimable)) {
-				ivalue = UINT(zonebuf + 
-					OFFSET(zone_all_unreclaimable));
+				ivalue = EUINT(&(UINT(zonebuf + 
+					OFFSET(zone_all_unreclaimable))));
 				fprintf(fp, "  ALL_UNRECLAIMABLE: %s  ", 
 					ivalue ? "yes" : "no");
 			} else if (VALID_MEMBER(zone_flags) &&
 				enumerator_value("ZONE_ALL_UNRECLAIMABLE", 
 				(long *)&value1)) {
-				value2 = ULONG(zonebuf + OFFSET(zone_flags));
+				value2 = EULONG(&(ULONG(zonebuf + OFFSET(zone_flags))));
 				value3 = value2 & (1 << value1);
 				fprintf(fp, "  ALL_UNRECLAIMABLE: %s  ", 
 					value3 ? "yes" : "no");
 			}
 
 			if (VALID_MEMBER(zone_pages_scanned)) {
-				value1 = ULONG(zonebuf + 
-					OFFSET(zone_pages_scanned));
+				value1 = EULONG(&(ULONG(zonebuf +
+					OFFSET(zone_pages_scanned))));
 				fprintf(fp, "PAGES_SCANNED: %lu  ", value1);
 			} 
 			fprintf(fp, "\n");
@@ -17668,7 +17683,7 @@ dump_vm_stat(char *item, long *retval, ulong zone)
 			}
 			fprintf(fp, "%s%s: %ld\n",
 				space(maxlen - strlen(vt->vm_stat_items[i])),
-				 vt->vm_stat_items[i], vp[i]);
+				vt->vm_stat_items[i], EULONG(&(vp[i])));
 		}
 		return TRUE;
 	}
@@ -17676,7 +17691,7 @@ dump_vm_stat(char *item, long *retval, ulong zone)
 	vp = (ulong *)buf;
 	for (i = 0; i < total_cnt; i++) {
 		if (STREQ(vt->vm_stat_items[i], item)) {
-			*retval = vp[i];
+			*retval = EULONG(&(vp[i]));
 			return TRUE;
 		}
 	}
@@ -18406,9 +18421,9 @@ get_kmem_cache_slub_data(long cmd, struct meminfo *si)
 	for (n = 0; n < vt->numnodes; n++) {
 		if (vt->flags & CONFIG_NUMA) {
 			nt = &vt->node_table[n];
-			node_ptr = ULONG(si->cache_buf +
+			node_ptr = EULONG(&(ULONG(si->cache_buf +
 				OFFSET(kmem_cache_node) +
-				(sizeof(void *) * nt->node_id));
+				(sizeof(void *) * nt->node_id))));
 		} else
 			node_ptr = si->cache + 
 				OFFSET(kmem_cache_local_node);
@@ -19181,9 +19196,9 @@ get_cpu_slab_ptr(struct meminfo *si, int cpu, ulong *cpu_freelist)
 	switch (vt->cpu_slab_type)
 	{
 	case TYPE_CODE_STRUCT:
-		cpu_slab_ptr = ULONG(si->cache_buf +
+		cpu_slab_ptr = EULONG(&(ULONG(si->cache_buf +
                         OFFSET(kmem_cache_cpu_slab) +
-			OFFSET(kmem_cache_cpu_page));
+			OFFSET(kmem_cache_cpu_page))));
 		if (cpu_freelist && VALID_MEMBER(kmem_cache_cpu_freelist))
 			*cpu_freelist = ULONG(si->cache_buf +
                         	OFFSET(kmem_cache_cpu_slab) +
@@ -19191,8 +19206,8 @@ get_cpu_slab_ptr(struct meminfo *si, int cpu, ulong *cpu_freelist)
 		break;
 
 	case TYPE_CODE_ARRAY:
-		cpu_slab_ptr = ULONG(si->cache_buf +
-			OFFSET(kmem_cache_cpu_slab) + (sizeof(void *)*cpu));
+		cpu_slab_ptr = EULONG(&(ULONG(si->cache_buf +
+			OFFSET(kmem_cache_cpu_slab) + (sizeof(void *)*cpu))));
 
 		if (cpu_slab_ptr && cpu_freelist &&
 		    VALID_MEMBER(kmem_cache_cpu_freelist)) {
@@ -19213,7 +19228,7 @@ get_cpu_slab_ptr(struct meminfo *si, int cpu, ulong *cpu_freelist)
 		break;
 
 	case TYPE_CODE_PTR:
-		cpu_slab_ptr = ULONG(si->cache_buf + OFFSET(kmem_cache_cpu_slab)) +
+		cpu_slab_ptr = EULONG(&(ULONG(si->cache_buf + OFFSET(kmem_cache_cpu_slab)))) +
 			kt->__per_cpu_offset[cpu];
 
 		if (cpu_slab_ptr && cpu_freelist &&

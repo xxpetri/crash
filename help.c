@@ -1256,7 +1256,7 @@ NULL
 char *help_ps[] = {
 "ps",
 "display process status information",
-"[-k|-u|-G|-y policy] [-s] [-p|-c|-t|-[l|m][-C cpu]|-a|-g|-r|-S|-A]\n     [pid | task | command] ...",
+"[-k|-u|-G|-y policy] [-s] [-P] [-p|-c|-t|-[l|m][-C cpu]|-a|-g|-r|-S|-A]\n     [pid | task | command] ...",
 "  This command displays process status for selected, or all, processes" ,
 "  in the system.  If no arguments are entered, the process data is",
 "  is displayed for all processes.  Specific processes may be selected",
@@ -1303,6 +1303,8 @@ char *help_ps[] = {
 "  pointer under a column titled \"KSTACKP\".",
 " ",
 "       -s  replace the TASK column with the KSTACKP column.",
+"       -P  display additional information on scheduling policy, absolute",
+"           priority and nice value of the processes.",
 " ",
 "  On SMP machines, the active task on each CPU will be highlighted by an",
 "  angle bracket (\">\") preceding its information.  If the crash variable",
