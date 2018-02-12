@@ -2511,7 +2511,7 @@ static int __trace_cmd_data_output(int fd)
 	/* We don't have the instance buffer offsets yet, so we'll write in 0s
 	 * for now, and fix it up after we have that information available */
 	global_res_data_offset = lseek(fd, 0, SEEK_CUR);
-	if (save_res_data(fd, nr_cpu_buffers, NULL))
+	if (save_res_data(fd, nr_cpu_buffers))
 		return -1;
 	if (save_record_data(fd, nr_cpu_buffers, &global_trace_instance))
 		return -1;
@@ -2538,7 +2538,7 @@ static int __trace_cmd_data_output(int fd)
 	/* Fix up the global trace's options header with the instance offsets */
 	lseek(fd, global_res_data_offset, SEEK_SET);
 	nr_cpu_buffers = get_nr_cpu_buffers(&global_trace_instance);
-	if (save_res_data(fd, nr_cpu_buffers, instance_offsets))
+	if (save_res_data(fd, nr_cpu_buffers))
 		return -1;
 
 	return 0;
