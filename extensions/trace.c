@@ -21,6 +21,9 @@ static int verbose = 0;
 
 static int nr_cpu_ids;
 
+#define DOSWAP 1
+#define DONOTSWAP 0
+
 /*
  * lockless ring_buffer and old non-lockless ring_buffer are both supported.
  */
@@ -146,38 +149,104 @@ static int ftrace_init_event_types(void);
 /* Remove the "const" qualifiers for ptr */
 #define free(ptr) free((void *)(ptr))
 
-static int write_and_check(int fd, void *data, size_t size)
+static void DumpHex(const void* data, size_t size) {
+	char ascii[17];
+	size_t i, j;
+	
+	if (size  > 128) size = 128;
+	
+	fprintf(fp,"DumpHex %d byes\n",size);
+	
+	ascii[16] = '\0';
+	for (i = 0; i < size; ++i) {
+		fprintf(fp,"%02X ", ((unsigned char*)data)[i]);
+		if (((unsigned char*)data)[i] >= ' ' && ((unsigned char*)data)[i] <= '~') {
+			ascii[i % 16] = ((unsigned char*)data)[i];
+		} else {
+			ascii[i % 16] = '.';
+		}
+		if ((i+1) % 8 == 0 || i+1 == size) {
+			fprintf(fp," ");
+			if ((i+1) % 16 == 0) {
+				fprintf(fp,"|  %s \n", ascii);
+			} else if (i+1 == size) {
+				ascii[(i+1) % 16] = '\0';
+				if ((i+1) % 16 <= 8) {
+					fprintf(fp," ");
+				}
+				for (j = (i+1) % 16; j < 16; ++j) {
+					fprintf(fp,"   ");
+				}
+				fprintf(fp,"|  %s \n", ascii);
+			}
+		}
+	}
+}
+
+
+
+static int write_and_check(int fd, void *data, size_t size, int swap)
 {
 	size_t tot = 0;
 	size_t w;
+	uint16_t t16;
+	uint32_t t32;
+	uint64_t t64;
+	
+	// call indicated a swap if on x86 
+	if (swap)
+	{ 
+		fprintf(fp,"size %d do swap: %lld\n !!!!",size, NEED_SWAP() );
+		switch (size) {
+		case 2:
+			t16 = *((uint16_t*)data);
+			t16 = swap16(t16, NEED_SWAP());
+			DumpHex(&t16,size);
+			do {
+				w = write(fd, &t16, size - tot);
+				tot += w;
+				if (w <= 0)
+					return -1;
+			} while (tot != size);
+			break;
+		case 4:
+			t32 = *((uint32_t*)data);
+			t32 = swap32(t32, NEED_SWAP());
+			DumpHex(&t32,size);
+			do {
+				w = write(fd, &t32, size - tot);
+				tot += w;
+				if (w <= 0)
+					return -1;
+			} while (tot != size);
+			break;
+		case 8:
+			t64 = *((uint64_t*)data);
+			t64 = swap16(t64, NEED_SWAP());
+			DumpHex(&t64,size);
+			do {
+				w = write(fd, &t64, size - tot);
+				tot += w;
+				if (w <= 0)
+					return -1;
+			} while (tot != size);
+			break;
+		default:
+			fprintf(fp,"ERROR: swap given for invalid length\n");
+		}
+	} else {
 
-	do {
-		w = write(fd, data, size - tot);
-		tot += w;
-
-		if (w <= 0)
-			return -1;
-	} while (tot != size);
+		DumpHex(data,size);
+		do {
+			w = write(fd, data, size - tot);
+			tot += w;
+	
+			if (w <= 0)
+				return -1;
+		} while (tot != size);
+	}
 
 	return 0;
-}
-
-static unsigned int write16(int fd, uint16_t val)
-{
-	val = swap16(val, NEED_SWAP());
-	return write_and_check(fd, &val, sizeof(val));
-}
-
-static unsigned int write32(int fd, uint32_t val)
-{
-	val = swap32(val, NEED_SWAP());
-	return write_and_check(fd, &val, sizeof(val));
-}
-
-static unsigned int write64(int fd, uint64_t val)
-{
-	val = swap64(val, NEED_SWAP());
-	return write_and_check(fd, &val, sizeof(val));
 }
 
 #ifndef PATH_MAX
@@ -751,7 +820,7 @@ static int ftrace_dump_page(int fd, ulong page, void *page_tmp)
 			RETURN_ON_ERROR))
 		goto out_fail;
 
-	if (write_and_check(fd, page_tmp, PAGESIZE()))
+	if (write_and_check(fd, page_tmp, PAGESIZE(),DONOTSWAP))
 		return -1;
 
 	return 0;
@@ -1022,6 +1091,7 @@ static int ftrace_init_event_fields(ulong fields_head, int *pnfields,
 		struct ftrace_field **pfields)
 {
 	ulong pos;
+	int c=0;
 
 	int nfields = 0, max_fields = 16;
 	struct ftrace_field *fields = NULL;
@@ -1043,7 +1113,8 @@ static int ftrace_init_event_fields(ulong fields_head, int *pnfields,
 		ulong name_addr, type_addr;
 		char field_name[128], field_type[128];
 		int offset, size, is_signed;
-
+	
+		c++;
 		field = pos - koffset(ftrace_event_field, link);
 
 		/* Read a field from the core */
@@ -1054,16 +1125,14 @@ static int ftrace_init_event_fields(ulong fields_head, int *pnfields,
 		read_value(is_signed, field, ftrace_event_field, is_signed);
 
 		if (!read_string(name_addr, field_name, 128)) {
-			strcpy(field_name,"dummy_name");
+			fprintf(fp,"name_addr: called %d times\n",c);
+			// goto out_fail;
 		}
 		if (!read_string(type_addr, field_type, 128)) {
-			strcpy(field_name,"dummy_type");
+			fprintf(fp,"type_addr: called %d times\n",c);
+			// goto out_fail;
 		}
-
-		if (CRASHDEBUG(8)) {
-			fprintf(fp,"name <%s>  type <%s> \n",field_name, field_type);
-		}
-
+			
 		/* Enlarge fields array when need */
 		if (nfields >= max_fields) {
 			void *tmp;
@@ -1926,7 +1995,7 @@ static int tmp_file_record_size4(int fd)
 
 	if (tmp_file_error)
 		return -1;
-	if (write32(fd, size))
+	if (write_and_check(fd, &size, 4, DONOTSWAP))
 		return -1;
 	return 0;
 }
@@ -1935,7 +2004,7 @@ static int tmp_file_record_size8(int fd)
 {
 	if (tmp_file_error)
 		return -1;
-	if (write64(fd, tmp_file_pos))
+	if (write_and_check(fd, &tmp_file_pos, 8, DONOTSWAP))
 		return -1;
 	return 0;
 }
@@ -1944,7 +2013,7 @@ static int tmp_file_flush(int fd)
 {
 	if (tmp_file_error)
 		return -1;
-	if (write_and_check(fd, tmp_file_buf, tmp_file_pos))
+	if (write_and_check(fd, tmp_file_buf, tmp_file_pos,DONOTSWAP ))
 		return -1;
 	tmp_file_pos = 0;
 	return 0;
@@ -1955,11 +2024,11 @@ static int save_initial_data(int fd)
 	int page_size;
 	char buf[20];
 
-	if (write_and_check(fd, "\027\010\104tracing", 10))
+	if (write_and_check(fd, "\027\010\104tracing", 10, DONOTSWAP))
 		return -1;
 
 	if (write_and_check(fd, TRACE_CMD_FILE_VERSION_STRING,
-				strlen(TRACE_CMD_FILE_VERSION_STRING) + 1))
+				strlen(TRACE_CMD_FILE_VERSION_STRING) + 1 , DONOTSWAP ))
 		return -1;
 
 	/* Crash ensure core file endian and the host endian are the same */
@@ -1967,20 +2036,20 @@ static int save_initial_data(int fd)
 		buf[0] = 1;
 	else
 		buf[0] = 0;
-
+	
 	if(NEED_SWAP())
 		buf[0] ^= 1;
 
-	if (write_and_check(fd, buf, 1))
+	if (write_and_check(fd, buf, 1, DONOTSWAP))
 		return -1;
 
 	/* save size of long (this may not be what the kernel is) */
 	buf[0] = sizeof(long);
-	if (write_and_check(fd, buf, 1))
+	if (write_and_check(fd, buf, 1, DONOTSWAP))
 		return -1;
 
 	page_size = PAGESIZE();
-	if (write32(fd, page_size))
+	if (write_and_check(fd, &page_size, 4, DOSWAP))
 		return -1;
 
 	return 0;
@@ -1989,7 +2058,7 @@ static int save_initial_data(int fd)
 static int save_header_files(int fd)
 {
 	/* save header_page */
-	if (write_and_check(fd, "header_page", 12))
+	if (write_and_check(fd, "header_page", 12, DONOTSWAP))
 		return -1;
 
 	tmp_fprintf("\tfield: u64 timestamp;\toffset:0;\tsize:8;\tsigned:0;\n");
@@ -2010,7 +2079,7 @@ static int save_header_files(int fd)
 		return -1;
 
 	/* save header_event */
-	if (write_and_check(fd, "header_event", 13))
+	if (write_and_check(fd, "header_event", 13, DONOTSWAP))
 		return -1;
 
 	tmp_fprintf(
@@ -2109,7 +2178,7 @@ static int save_system_files(int fd, int *system_ids, int system_id)
 			total++;
 	}
 
-	if (write32(fd, total))
+	if (write_and_check(fd, &total, 4,DONOTSWAP))
 		return -1;
 
 	for (i = 0; i < nr_event_types; i++) {
@@ -2158,7 +2227,7 @@ static int save_events_files(int fd)
 
 	/* other systems events */
 	nr_systems = system_id - 2;
-	if (write32(fd, nr_systems))
+	if (write_and_check(fd, &nr_systems, 4, DONOTSWAP))
 		goto fail;
 	for (system_id = 2; system_id < nr_systems + 2; system_id++) {
 		for (i = 0; i < nr_event_types; i++) {
@@ -2166,7 +2235,7 @@ static int save_events_files(int fd)
 				break;
 		}
 		if (write_and_check(fd, (void *)event_types[i]->system,
-				strlen(event_types[i]->system) + 1))
+				strlen(event_types[i]->system) + 1, DONOTSWAP ))
 			goto fail;
 		if (save_system_files(fd, system_ids, system_id))
 			goto fail;
@@ -2329,7 +2398,7 @@ static int save_ftrace_printk(int fd)
  out:
 	if (count == 0) {
 		unsigned int size = 0;
-		return write32(fd, size);
+		return write_and_check(fd, &size, 4, DONOTSWAP);
 	}
 	if (tmp_file_record_size4(fd))
 		return -1;
@@ -2368,7 +2437,7 @@ static int write_options(int fd, unsigned long long *buffer_offsets)
 	if (!multiple_instances_available)
 		return 0;
 
-	if (write_and_check(fd, "options  ", 10))
+	if (write_and_check(fd, "options  ", 10, DONOTSWAP))
 		return -1;
 
 	option = TRACECMD_OPTION_BUFFER;
@@ -2380,42 +2449,36 @@ static int write_options(int fd, unsigned long long *buffer_offsets)
 		unsigned long long offset;
 
 		offset = buffer_offsets ? buffer_offsets[i] : 0;
-		if (write_and_check(fd, &option, 2))
+		if (write_and_check(fd, &option, 2, DONOTSWAP))
 			return -1;
-		if (write_and_check(fd, &option_size, 4))
+		if (write_and_check(fd, &option_size, 4, DONOTSWAP))
 			return -1;
-		if (write_and_check(fd, &offset, 8))
+		if (write_and_check(fd, &offset, 8, DONOTSWAP))
 			return -1;
-		if (write_and_check(fd, name, name_size))
+		if (write_and_check(fd, name, name_size, DONOTSWAP))
 			return -1;
 	}
 
 	option = TRACECMD_OPTION_DONE;
-	if (write_and_check(fd, &option, 2))
+	if (write_and_check(fd, &option, 2, DONOTSWAP))
 		return -1;
 
 	return 0;
 }
 
-static int save_res_data(int fd, int nr_cpu_buffers)
+static int save_res_data(int fd, int nr_cpu_buffers, unsigned long long *buffer_offsets)
 {
-	unsigned short option = 0;
-
-	if (write32(fd, nr_cpu_buffers))
+	if (write_and_check(fd, &nr_cpu_buffers, 4, DONOTSWAP))
 		return -1;
 
-	if (write_and_check(fd, "options  ", 10))
+	if (write_options(fd, buffer_offsets))
 		return -1;
 
-	if (write_and_check(fd, &option, 2))
-		return -1;
-
-	if (write_and_check(fd, "flyrecord", 10))
+	if (write_and_check(fd, "flyrecord", 10, DONOTSWAP))
 		return -1;
 
 	return 0;
 }
-
 
 static int save_record_data(int fd, int nr_cpu_buffers, struct trace_instance *ti)
 {
@@ -2436,9 +2499,9 @@ static int save_record_data(int fd, int nr_cpu_buffers, struct trace_instance *t
 			continue;
 
 		buffer_size = PAGESIZE() * cpu_buffer->nr_linear_pages;
-		if (write64(fd, buffer_offset))
+		if (write_and_check(fd, &buffer_offset, 8, DONOTSWAP))
 			return -1;
-		if (write64(fd, buffer_size))
+		if (write_and_check(fd, &buffer_size, 8, DONOTSWAP))
 			return -1;
 		buffer_offset += buffer_size;
 	}
@@ -2511,7 +2574,7 @@ static int __trace_cmd_data_output(int fd)
 	/* We don't have the instance buffer offsets yet, so we'll write in 0s
 	 * for now, and fix it up after we have that information available */
 	global_res_data_offset = lseek(fd, 0, SEEK_CUR);
-	if (save_res_data(fd, nr_cpu_buffers))
+	if (save_res_data(fd, nr_cpu_buffers, NULL))
 		return -1;
 	if (save_record_data(fd, nr_cpu_buffers, &global_trace_instance))
 		return -1;
@@ -2528,7 +2591,7 @@ static int __trace_cmd_data_output(int fd)
 			/* Save off the instance offset for fixup later */
 			instance_offsets[i] = lseek(fd, 0, SEEK_CUR);
 
-			if (write_and_check(fd, "flyrecord", 10))
+			if (write_and_check(fd, "flyrecord", 10, DONOTSWAP))
 				return -1;
 			if (save_record_data(fd, nr_cpu_buffers, ti))
 				return -1;
@@ -2538,7 +2601,7 @@ static int __trace_cmd_data_output(int fd)
 	/* Fix up the global trace's options header with the instance offsets */
 	lseek(fd, global_res_data_offset, SEEK_SET);
 	nr_cpu_buffers = get_nr_cpu_buffers(&global_trace_instance);
-	if (save_res_data(fd, nr_cpu_buffers))
+	if (save_res_data(fd, nr_cpu_buffers, instance_offsets))
 		return -1;
 
 	return 0;
