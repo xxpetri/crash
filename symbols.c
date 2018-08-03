@@ -3458,9 +3458,18 @@ is_kernel(char *file)
     
         if( swap )							/* Nathan */
             pc->flags2 |= ENDIAN_DIFF;		/* Nathan */
+        
+        char class;
+        short type;
+        int version;
+        
+        class = elf32->e_ident[EI_CLASS];
+        type = swap16(elf32->e_type, swap);
+        version = swap32(elf32->e_version,swap);
 
         if ((elf32->e_ident[EI_CLASS] == ELFCLASS32) &&
-	    (swap16(elf32->e_type, swap) == ET_EXEC) &&
+	    ((swap16(elf32->e_type, swap) == ET_EXEC) || 
+	     (swap16(elf32->e_type, swap) == ET_DYN)) &&
 	    (swap32(elf32->e_version, swap) == EV_CURRENT)) {
 		switch (swap16(elf32->e_machine, swap))
 		{
