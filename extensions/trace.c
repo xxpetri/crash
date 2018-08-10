@@ -201,7 +201,7 @@ static int write_and_check(int fd, void *data, size_t size, int swap)
 		case 2:
 			t16 = *((uint16_t*)data);
 			t16 = swap16(t16, NEED_SWAP());
-			DumpHex(&t16,size);
+			// DumpHex(&t16,size);
 			do {
 				w = write(fd, &t16, size - tot);
 				tot += w;
@@ -212,7 +212,7 @@ static int write_and_check(int fd, void *data, size_t size, int swap)
 		case 4:
 			t32 = *((uint32_t*)data);
 			t32 = swap32(t32, NEED_SWAP());
-			DumpHex(&t32,size);
+			// DumpHex(&t32,size);
 			do {
 				w = write(fd, &t32, size - tot);
 				tot += w;
@@ -223,7 +223,7 @@ static int write_and_check(int fd, void *data, size_t size, int swap)
 		case 8:
 			t64 = *((uint64_t*)data);
 			t64 = swap16(t64, NEED_SWAP());
-			DumpHex(&t64,size);
+			// DumpHex(&t64,size);
 			do {
 				w = write(fd, &t64, size - tot);
 				tot += w;
@@ -236,7 +236,7 @@ static int write_and_check(int fd, void *data, size_t size, int swap)
 		}
 	} else {
 
-		DumpHex(data,size);
+		// DumpHex(data,size);
 		do {
 			w = write(fd, data, size - tot);
 			tot += w;

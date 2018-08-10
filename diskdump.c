@@ -1403,7 +1403,7 @@ read_diskdump(int fd, void *bufptr, int cnt, ulong addr, physaddr_t paddr)
 			fprintf(fp,"read_diskdump: count: %d  value: %08lx \n", cnt,*((unsigned long *)bufptr));	/* Karlo */
 	}																								/* Karlo */
 	else if (cnt == 8) {																				/* Karlo */
-		*(unsigned long *)bufptr = EULONGLONG((unsigned long *)bufptr);
+		// *(unsigned long *)bufptr = EULONGLONG((unsigned long *)bufptr);
 		if (CRASHDEBUG(8)) 																				/* Karlo */
 			fprintf(fp,"read_diskdump: count: %d  value: %llx \n", cnt,*((unsigned long *)bufptr));		/* Karlo */
 	}	else {
