@@ -5551,6 +5551,7 @@ get_uptime(char *buf, ulonglong *j64p)
 
 	if (symbol_exists("jiffies_64")) {
 		get_symbol_data("jiffies_64", sizeof(ulonglong), &jiffies_64);
+		jiffies_64=EULONGLONG(&jiffies_64);
 		if (THIS_KERNEL_VERSION >= LINUX(2,6,0)) {
 			wrapped = (jiffies_64 & 0xffffffff00000000ULL);
 			if (wrapped) {
@@ -10363,12 +10364,14 @@ get_xtime(struct timespec *date)
                 readmem(sp->value + OFFSET(timekeeper_xtime_sec), KVADDR, 
 			&xtime_sec, sizeof(uint64_t),
                         "timekeeper xtime_sec", RETURN_ON_ERROR);
+                xtime_sec=EULONGLONG(&xtime_sec);
 		date->tv_sec = (__time_t)xtime_sec;
 	} else if (VALID_MEMBER(timekeeper_xtime_sec) &&
 	    (sp = kernel_symbol_search("shadow_timekeeper"))) {
                 readmem(sp->value + OFFSET(timekeeper_xtime_sec), KVADDR, 
 			&xtime_sec, sizeof(uint64_t),
                         "shadow_timekeeper xtime_sec", RETURN_ON_ERROR);
+                xtime_sec=EULONGLONG(&xtime_sec);
 		date->tv_sec = (__time_t)xtime_sec;
 	} else if (kernel_symbol_exists("xtime"))
 		get_symbol_data("xtime", sizeof(struct timespec), date);
