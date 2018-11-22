@@ -2524,11 +2524,11 @@ open_files_dump(ulong task, int flags, struct reference *ref)
 			FAULT_ON_ERROR);
 	
 		if (VALID_MEMBER(files_struct_max_fdset)) {
-			max_fdset = INT(files_struct_buf +
-			OFFSET(files_struct_max_fdset));
+			max_fdset = EINT(&(INT(files_struct_buf +
+			OFFSET(files_struct_max_fdset))));
 
-			max_fds = INT(files_struct_buf +
-			OFFSET(files_struct_max_fds));
+			max_fds = EINT(&(INT(files_struct_buf +
+			OFFSET(files_struct_max_fds))));
 		}
 	}
 
@@ -2539,12 +2539,12 @@ open_files_dump(ulong task, int flags, struct reference *ref)
 			readmem(fdtable_addr, KVADDR, fdtable_buf,
 	 			SIZE(fdtable), "fdtable buffer", FAULT_ON_ERROR); 
 			if (VALID_MEMBER(fdtable_max_fdset))
-				max_fdset = INT(fdtable_buf +
-					OFFSET(fdtable_max_fdset));
+				max_fdset = EINT(&(INT(fdtable_buf +
+					OFFSET(fdtable_max_fdset))));
 			else
 				max_fdset = -1;
-			max_fds = INT(fdtable_buf +
-        	                OFFSET(fdtable_max_fds));
+			max_fds = EINT(&(INT(fdtable_buf +
+        	                OFFSET(fdtable_max_fds))));
 		}
 	}
 
@@ -2957,7 +2957,7 @@ file_dump(ulong file, ulong dentry, ulong inode, int fd, int flags)
 				space(MINSPACE),
 				pathname+1);
 		} else if (flags & DUMP_FILE_NRPAGES) {
-			i_mapping = ULONG(inode_buf + OFFSET(inode_i_mapping));
+			i_mapping = EULONG(&(ULONG(inode_buf + OFFSET(inode_i_mapping))));
 			nrpages = get_inode_nrpages(i_mapping);
 
 			fprintf(fp, "%3d%s%s%s%s%s%s%s%s%s%s\n",
