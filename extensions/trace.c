@@ -46,6 +46,11 @@ static int max_buffer_available;
  */
 static int multiple_instances_available;
 
+/*
+ * buffer_page has "real_end"
+ */
+static int buffer_page_real_end_available;
+
 #define koffset(struct, member) struct##_##member##_offset
 
 static int koffset(trace_array, current_trace);
@@ -73,6 +78,7 @@ static int koffset(ring_buffer_per_cpu, entries);
 static int koffset(buffer_page, read);
 static int koffset(buffer_page, list);
 static int koffset(buffer_page, page);
+static int koffset(buffer_page, real_end);
 
 static int koffset(list_head, next);
 
@@ -316,6 +322,7 @@ static int init_offsets(void)
 	init_offset(buffer_page, read);
 	init_offset(buffer_page, list);
 	init_offset(buffer_page, page);
+	init_offset(buffer_page, real_end);
 
 	init_offset(list_head, next);
 
@@ -368,6 +375,7 @@ static void print_offsets(void)
 	print_offset(buffer_page, read);
 	print_offset(buffer_page, list);
 	print_offset(buffer_page, page);
+	print_offset(buffer_page, real_end);
 
 	print_offset(list_head, next);
 
@@ -380,6 +388,20 @@ static void print_offsets(void)
 	print_offset(ftrace_event_field, size);
 	print_offset(ftrace_event_field, is_signed);
 #undef print_offset
+}
+
+static int buffer_page_has_data(ulong page)
+{
+	uint end;
+
+	if (!buffer_page_real_end_available)
+		return 1;
+
+	/* Only write pages with data in it */
+	read_value(end, page, buffer_page, real_end);
+	return end;
+out_fail:
+	return 0;
 }
 
 static int ftrace_init_pages(struct ring_buffer_per_cpu *cpu_buffer,
@@ -448,7 +470,8 @@ static int ftrace_init_pages(struct ring_buffer_per_cpu *cpu_buffer,
 
 	/* Setup linear pages */
 
-	cpu_buffer->linear_pages[count++] = cpu_buffer->reader_page;
+	if (buffer_page_has_data(cpu_buffer->reader_page))
+		cpu_buffer->linear_pages[count++] = cpu_buffer->reader_page;
 
 	if (cpu_buffer->reader_page == cpu_buffer->commit_page)
 		goto done;
@@ -734,6 +757,8 @@ static int ftrace_init(void)
 		ftrace_trace_arrays = sym_ftrace_trace_arrays->value;
 	}
 
+	if (MEMBER_EXISTS("buffer_page", "real_end"))
+		buffer_page_real_end_available = 1;
 
 	if (MEMBER_EXISTS("trace_array", "current_trace")) {
 		encapsulated_current_trace = 1;
@@ -940,8 +965,18 @@ static int syscall_get_enter_fields(ulong call, ulong *fields)
 	inited = 1;
 	data_offset = MAX(MEMBER_OFFSET("ftrace_event_call", "data"), 
 		MEMBER_OFFSET("trace_event_call", "data"));
-	if (data_offset < 0)
-		return -1;
+	if (data_offset < 0) {
+		/*
+		 *  rhel-7.6 moved the .data member into an anonymous union.
+		 */
+		if (MEMBER_EXISTS("ftrace_event_call", "rh_data") &&
+		    MEMBER_EXISTS("ftrace_event_data", "data")) {
+			data_offset = MEMBER_OFFSET("ftrace_event_call", "rh_data") +
+				MEMBER_OFFSET("ftrace_event_data", "data");
+			inited = 2;
+		} else
+			return -1;
+	}
 
 	enter_fields_offset = MEMBER_OFFSET("syscall_metadata", "enter_fields");
 	if (enter_fields_offset < 0)
@@ -954,6 +989,12 @@ work:
 	if (!readmem(call + data_offset, KVADDR, &metadata, sizeof(metadata),
 			"read ftrace_event_call data", RETURN_ON_ERROR))
 		return -1;
+
+	if (inited == 2) {
+		if (!readmem(metadata, KVADDR, &metadata, sizeof(metadata),
+		    "read ftrace_event_call data (indirect rh_data)", RETURN_ON_ERROR))
+			return -1;
+	}
 
 	*fields = metadata + enter_fields_offset;
 	return 0;
@@ -1886,7 +1927,7 @@ static void cmd_ftrace(void)
 static char *help_ftrace[] = {
 "trace",
 "show or dump the tracing info",
-"[ <show [-c <cpulist>] [-f [no]<flagname>]> | <dump [-sm] <dest-dir>> ]",
+"[ <show [-c <cpulist>] [-f [no]<flagname>]> | <dump [-sm] <dest-dir>> ] | <dump -t <trace.dat> ]",
 "trace",
 "    shows the current tracer and other informations.",
 "",
@@ -2264,7 +2305,8 @@ static int save_proc_kallsyms(int fd)
 			if (!strncmp(sp->name, "_MODULE_", strlen("_MODULE_")))
 				continue;
 
-			tmp_fprintf("%lx %c %s\t[%s]\n", sp->value, sp->type,
+			/* Currently sp->type for modules is not trusted */
+			tmp_fprintf("%lx %c %s\t[%s]\n", sp->value, 'm',
 					sp->name, lm->mod_name);
 		}
 	}

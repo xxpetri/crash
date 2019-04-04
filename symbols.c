@@ -1,8 +1,8 @@
 /* symbols.c - core analysis suite
  *
  * Copyright (C) 1999, 2000, 2001, 2002 Mission Critical Linux, Inc.
- * Copyright (C) 2002-2018 David Anderson
- * Copyright (C) 2002-2018 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2002-2019 David Anderson
+ * Copyright (C) 2002-2019 Red Hat, Inc. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -28,7 +28,6 @@ static void store_sysmap_symbols(void);
 static ulong relocate(ulong, char *, int);
 static int relocate_force(ulong, char *);
 static void kaslr_init(void);
-static ulong symbol_value_from_proc_kallsyms(char *);
 static void strip_module_symbol_end(char *s);
 static int compare_syms(const void *, const void *);
 static int compare_mods(const void *, const void *);
@@ -997,7 +996,7 @@ relocate_force(ulong symval, char *symname)
 /*
  *  Get a symbol value from /proc/kallsyms.
  */
-static ulong
+ulong
 symbol_value_from_proc_kallsyms(char *symname)
 {
         FILE *kp;
@@ -1596,11 +1595,51 @@ store_module_symbols_v1(ulong total, int mods_installed)
                 st->flags |= INSMOD_BUILTIN;
 }
 
-struct kernel_symbol
-{
-        unsigned long value;
-        char *name;
+union kernel_symbol {
+	struct kernel_symbol_v1 {
+		unsigned long value;
+		const char *name;
+	} v1;
+	/* kernel 4.19 introduced relative symbol positionning */
+	struct kernel_symbol_v2 {
+		int value_offset;
+		int name_offset;
+	} v2;
 };
+
+static ulong
+modsym_name(ulong syms, union kernel_symbol *modsym, int i)
+{
+	ulong swap=0;
+	if (VALID_MEMBER(kernel_symbol_value))
+	{	swap = (ulong)modsym->v1.name;
+		swap=EULONG(&swap);
+		return swap;
+	}
+
+	swap=syms + i * sizeof(struct kernel_symbol_v2) +
+			offsetof(struct kernel_symbol_v2, name_offset) +
+			modsym->v2.name_offset;
+	
+	return swap;
+}
+
+static ulong
+modsym_value(ulong syms, union kernel_symbol *modsym, int i)
+{
+	ulong swap;
+	if (VALID_MEMBER(kernel_symbol_value)) 
+	{	swap=(ulong)modsym->v1.value;
+		swap=EULONG(&swap);
+		return swap;
+	}
+
+	swap = syms + i * sizeof(struct kernel_symbol_v2) +
+			offsetof(struct kernel_symbol_v2, value_offset) +
+			modsym->v2.value_offset;
+	swap=EULONG(&swap);
+	return swap;
+}
 
 void
 store_module_symbols_v2(ulong total, int mods_installed)
@@ -1616,7 +1655,8 @@ store_module_symbols_v2(ulong total, int mods_installed)
 	long strbuflen;
 	ulong size;
 	int mcnt, lm_mcnt;
-	struct kernel_symbol *modsym;
+	union kernel_symbol *modsym;
+	size_t kernel_symbol_size;
 	struct load_module *lm;
 	char buf1[BUFSIZE];
 	char buf2[BUFSIZE];
@@ -1639,6 +1679,13 @@ store_module_symbols_v2(ulong total, int mods_installed)
 	if (st->flags & MODULE_SYMS) {
 		error(FATAL, 
 		  "re-initialization of module symbols not implemented yet!\n");
+	}
+
+	MEMBER_OFFSET_INIT(kernel_symbol_value, "kernel_symbol", "value");
+	if (VALID_MEMBER(kernel_symbol_value)) {
+		kernel_symbol_size = sizeof(struct kernel_symbol_v1);
+	} else {
+		kernel_symbol_size = sizeof(struct kernel_symbol_v2);
 	}
 
         if ((st->ext_module_symtable = (struct syment *)
@@ -1761,26 +1808,22 @@ store_module_symbols_v2(ulong total, int mods_installed)
 		}
 
 		if (nsyms) {
-			modsymbuf = GETBUF(sizeof(struct kernel_symbol)*nsyms);
+			modsymbuf = GETBUF(kernel_symbol_size*nsyms);
 			readmem((ulong)syms, KVADDR, modsymbuf,
-				nsyms * sizeof(struct kernel_symbol),
+				nsyms * kernel_symbol_size,
 				"module symbols", FAULT_ON_ERROR);
 		} 
 
 		for (i = first = last = 0; i < nsyms; i++) {
-			modsym = (struct kernel_symbol *)
-			    (modsymbuf + (i * sizeof(struct kernel_symbol)));
-			    
-			ptmp=(unsigned long)modsym->name;
-			ptmp=EULONG(&ptmp);
-			modsym->name = (char *) ptmp;
-			modsym->value=EULONG(&(modsym->value));
+
+			modsym = (union kernel_symbol *)
+			    (modsymbuf + (i * kernel_symbol_size));
 			
 			if (!first
-			    || first > (ulong)modsym->name)
-				first = (ulong)modsym->name;
-			if ((ulong)modsym->name > last)
-				last = (ulong)modsym->name;
+			    || first > modsym_name(syms, modsym, i))
+				first = modsym_name(syms, modsym, i);
+			if (modsym_name(syms, modsym, i) > last)
+				last = modsym_name(syms, modsym, i);
 		}
 
 		if (last > first) {
@@ -1804,21 +1847,21 @@ store_module_symbols_v2(ulong total, int mods_installed)
 
 		for (i = 0; i < nsyms; i++) {
 
-			modsym = (struct kernel_symbol *)
-			    (modsymbuf + (i * sizeof(struct kernel_symbol)));
+			modsym = (union kernel_symbol *)
+			    (modsymbuf + (i * kernel_symbol_size));
 
 			BZERO(buf1, BUFSIZE);
 
 			if (strbuf) 
 				strcpy(buf1,
-					&strbuf[(ulong)modsym->name - first]);
+					&strbuf[modsym_name(syms, modsym, i) - first]);
 			else 
-				read_string((ulong)modsym->name, buf1,
+				read_string(modsym_name(syms, modsym, i), buf1,
                             		BUFSIZE-1);
 
                 	if (strlen(buf1)) {
 				st->ext_module_symtable[mcnt].value = 
-					modsym->value;
+					modsym_value(syms, modsym, i);
 				st->ext_module_symtable[mcnt].type = '?'; 
 				st->ext_module_symtable[mcnt].flags |= MODULE_SYMBOL;
 				strip_module_symbol_end(buf1);
@@ -1840,27 +1883,21 @@ store_module_symbols_v2(ulong total, int mods_installed)
 			FREEBUF(strbuf);
 
 		if (ngplsyms) {
-			modsymbuf = GETBUF(sizeof(struct kernel_symbol) *
+			modsymbuf = GETBUF(kernel_symbol_size *
 				ngplsyms);
 			readmem((ulong)gpl_syms, KVADDR, modsymbuf,
-				ngplsyms * sizeof(struct kernel_symbol),
+				ngplsyms * kernel_symbol_size,
 				"module gpl symbols", FAULT_ON_ERROR);
 		} 
 
 		for (i = first = last = 0; i < ngplsyms; i++) {
-			modsym = (struct kernel_symbol *)
-			    (modsymbuf + (i * sizeof(struct kernel_symbol)));
-			    
-			ptmp=(unsigned long)modsym->name;
-			ptmp=EULONG(&ptmp);
-			modsym->name = (char *) ptmp;
-			modsym->value=EULONG(&(modsym->value));
-
+			modsym = (union kernel_symbol *)
+			    (modsymbuf + (i * kernel_symbol_size));
 			if (!first
-			    || first > (ulong)modsym->name)
-				first = (ulong)modsym->name;
-			if ((ulong)modsym->name > last)
-				last = (ulong)modsym->name;
+			    || first > modsym_name(gpl_syms, modsym, i))
+				first = modsym_name(gpl_syms, modsym, i);
+			if (modsym_name(gpl_syms, modsym, i) > last)
+				last = modsym_name(gpl_syms, modsym, i);
 		}
 
 		if (last > first) {
@@ -1883,21 +1920,21 @@ store_module_symbols_v2(ulong total, int mods_installed)
 
 		for (i = 0; i < ngplsyms; i++) {
 
-			modsym = (struct kernel_symbol *)
-			    (modsymbuf + (i * sizeof(struct kernel_symbol)));
+			modsym = (union kernel_symbol *)
+			    (modsymbuf + (i * kernel_symbol_size));
 
 			BZERO(buf1, BUFSIZE);
 
 			if (strbuf) 
 				strcpy(buf1,
-					&strbuf[(ulong)modsym->name - first]);
+					&strbuf[modsym_name(gpl_syms, modsym, i) - first]);
 			else 
-				read_string((ulong)modsym->name, buf1,
+				read_string(modsym_name(gpl_syms, modsym, i), buf1,
                             		BUFSIZE-1);
 
                 	if (strlen(buf1)) {
 				st->ext_module_symtable[mcnt].value = 
-					modsym->value;
+					modsym_value(gpl_syms, modsym, i);
 				st->ext_module_symtable[mcnt].type = '?'; 
 				st->ext_module_symtable[mcnt].flags |= MODULE_SYMBOL;
 				strip_module_symbol_end(buf1);
@@ -2175,7 +2212,14 @@ Elf32_Sym_to_common(Elf32_Sym *e32, struct elf_common *ec)
 	ec->st_name = (ulong)e32->st_name;
 	ec->st_value = (ulong)e32->st_value;
 	ec->st_shndx = (ulong)e32->st_shndx;
-	ec->st_info = e32->st_info;
+	if ((e32->st_info >= ' ') && (e32->st_info < 0x7f))
+		ec->st_info = e32->st_info;
+	else if (e32->st_info == 0x02)
+		ec->st_info = 't';
+	else if (e32->st_info == 0x12)
+		ec->st_info = 'T';
+	else
+		ec->st_info = '?';
 	ec->st_size = (ulong)e32->st_size;
 	
 	if (NEED_SWAP() ) {
@@ -2193,7 +2237,14 @@ Elf64_Sym_to_common(Elf64_Sym *e64, struct elf_common *ec)
 	ec->st_name = (ulong)e64->st_name;
 	ec->st_value = (ulong)e64->st_value;
 	ec->st_shndx = (ulong)e64->st_shndx;
-	ec->st_info = e64->st_info;
+	if ((e64->st_info >= ' ') && (e64->st_info < 0x7f))
+		ec->st_info = e64->st_info;
+	else if (e64->st_info == 0x02)
+		ec->st_info = 't';
+	else if (e64->st_info == 0x12)
+		ec->st_info = 'T';
+	else
+		ec->st_info = '?';
 	ec->st_size = (ulong)e64->st_size;
 }
 
@@ -2800,7 +2851,7 @@ is_kernel_text(ulong value)
         if ((sp = value_search(value, NULL)) && is_symbol_text(sp))
 		return TRUE;
 
-        if (NO_MODULES())
+        if (NO_MODULES() || !(st->flags & MODULE_SYMS))
                 return FALSE;
 
         for (i = 0; i < st->mods_installed; i++) {
@@ -2965,6 +3016,9 @@ kallsyms_module_function_size(struct syment *sp, struct load_module *lm, ulong *
 	struct elf_common elf_common, *ec;
 
 	if (!(lm->mod_flags & MOD_KALLSYMS) || !(kt->flags & KALLSYMS_V2))
+		return FALSE;
+
+	if (THIS_KERNEL_VERSION >= LINUX(5,0,0))  /* st_size not useable */
 		return FALSE;
 
 	module_buf = GETBUF(lm->mod_size);
@@ -3905,12 +3959,10 @@ is_bfd_format(char *filename)
 #else
         struct bfd *bfd;
 #endif
-        char **matching;
-
         if ((bfd = bfd_openr(filename, NULL)) == NULL) 
                 return FALSE;
         
-        if (!bfd_check_format_matches(bfd, bfd_object, &matching)) {
+        if (!bfd_check_format_matches(bfd, bfd_object, NULL)) {
                 bfd_close(bfd);
                 return FALSE;
         }
@@ -4620,7 +4672,7 @@ module_symbol(ulong value,
 	ulong offs, offset;
 	ulong base, end;
 
-	if (NO_MODULES())
+	if (NO_MODULES() || !(st->flags & MODULE_SYMS))
 		return FALSE;
 
         if (!radix)
@@ -5507,6 +5559,7 @@ datatype_init(void)
  *   #define MEMBER_EXISTS(X,Y)  (datatype_info((X), (Y), NULL) >= 0)
  *   #define MEMBER_SIZE(X,Y)    datatype_info((X), (Y), MEMBER_SIZE_REQUEST)
  *   #define MEMBER_TYPE(X,Y)    datatype_info((X), (Y), MEMBER_TYPE_REQUEST)
+ *   #define MEMBER_TYPE_NAME(X,Y)      datatype_info((X), (Y), MEMBER_TYPE_NAME_REQUEST)
  *   #define ANON_MEMBER_OFFSET(X,Y)    datatype_info((X), (Y), ANON_MEMBER_OFFSET_REQUEST)
  *
  *  to determine structure or union sizes, or member offsets.
@@ -5533,9 +5586,9 @@ datatype_info(char *name, char *member, struct datatype_member *dm)
 	req->fp = pc->nullfp;
 
 	gdb_interface(req);
-        if (req->flags & GNU_COMMAND_FAILED) {
+	if (req->flags & GNU_COMMAND_FAILED) {
 		FREEBUF(req);
-		return -1;
+		return (dm == MEMBER_TYPE_NAME_REQUEST) ? 0 : -1;
 	}
 
 	if (!req->typecode) {
@@ -5651,7 +5704,7 @@ datatype_info(char *name, char *member, struct datatype_member *dm)
 	FREEBUF(req);
 
         if (dm && (dm != MEMBER_SIZE_REQUEST) && (dm != MEMBER_TYPE_REQUEST) &&
-	    (dm != STRUCT_SIZE_REQUEST)) {
+	    (dm != STRUCT_SIZE_REQUEST) && (dm != MEMBER_TYPE_NAME_REQUEST)) {
                 dm->type = type_found;
                 dm->size = size;
 		dm->member_size = member_size;
@@ -5666,14 +5719,25 @@ datatype_info(char *name, char *member, struct datatype_member *dm)
 		}
         }
 
-        if (!type_found) 
-        	return -1;
+	if (!type_found) 
+		return (dm == MEMBER_TYPE_NAME_REQUEST) ? 0 : -1;
 
 	if (dm == MEMBER_SIZE_REQUEST)
 		return member_size;
 	else if (dm == MEMBER_TYPE_REQUEST)
 		return member_typecode;
-	else if (dm == STRUCT_SIZE_REQUEST) {
+	else if (dm == MEMBER_TYPE_NAME_REQUEST) {
+		if (req->member_main_type_name)
+			return (ulong)req->member_main_type_name;
+		else if (req->member_main_type_tag_name)
+			return (ulong)req->member_main_type_tag_name;
+		else if (req->member_target_type_name)
+			return (ulong)req->member_target_type_name;
+		else if (req->member_target_type_tag_name)
+			return (ulong)req->member_target_type_tag_name;
+		else
+			return 0;
+	} else if (dm == STRUCT_SIZE_REQUEST) {
 		if ((req->typecode == TYPE_CODE_STRUCT) || 
 		    (req->typecode == TYPE_CODE_UNION) ||
 		     req->is_typedef)
@@ -8504,6 +8568,8 @@ builtin_array_length(char *s, int len, int *two_dim)
 		lenptr = &array_table.task_struct_rlim;
 	else if (STREQ(s, "signal_struct.rlim"))
 		lenptr = &array_table.signal_struct_rlim;
+	else if (STREQ(s, "vm_numa_stat"))
+		lenptr = &array_table.vm_numa_stat;
 
 	if (!lenptr)                /* not stored */
 		return(len);        
@@ -8651,6 +8717,8 @@ dump_offset_table(char *spec, ulong makestruct)
                 OFFSET(task_rss_stat_count));
         fprintf(fp, "              task_struct_pids: %ld\n",
                 OFFSET(task_struct_pids));
+        fprintf(fp, "         task_struct_pid_links: %ld\n",
+                OFFSET(task_struct_pid_links));
         fprintf(fp, "          task_struct_last_run: %ld\n",
                 OFFSET(task_struct_last_run));
         fprintf(fp, "         task_struct_timestamp: %ld\n",
@@ -9018,7 +9086,8 @@ dump_offset_table(char *spec, ulong makestruct)
         	OFFSET(kallsyms_section_size));
         fprintf(fp, "     kallsyms_section_name_off: %ld\n",
         	OFFSET(kallsyms_section_name_off));
-
+        fprintf(fp, "           kernel_symbol_value: %ld\n",
+        	OFFSET(kernel_symbol_value));
 	fprintf(fp, "                 module_taints: %ld\n",
 		OFFSET(module_taints));
 	fprintf(fp, "          module_license_gplok: %ld\n",
@@ -9273,6 +9342,8 @@ dump_offset_table(char *spec, ulong makestruct)
 		OFFSET(dentry_d_iname));
         fprintf(fp, "               dentry_d_covers: %ld\n",
                 OFFSET(dentry_d_covers));
+        fprintf(fp, "                   dentry_d_sb: %ld\n",
+                OFFSET(dentry_d_sb));
         fprintf(fp, "                      qstr_len: %ld\n", OFFSET(qstr_len));
         fprintf(fp, "                     qstr_name: %ld\n", OFFSET(qstr_name));
         fprintf(fp, "                  inode_i_mode: %ld\n",
@@ -9495,6 +9566,15 @@ dump_offset_table(char *spec, ulong makestruct)
                 OFFSET(kmem_cache_cpu_node));
         fprintf(fp, "              kmem_cache_flags: %ld\n",
                 OFFSET(kmem_cache_flags));
+
+	fprintf(fp, "       kmem_cache_memcg_params: %ld\n",
+		OFFSET(kmem_cache_memcg_params));
+	fprintf(fp, "memcg_cache_params___root_caches_node: %ld\n",
+		OFFSET(memcg_cache_params___root_caches_node));
+	fprintf(fp, "          memcg_cache_params_children: %ld\n",
+		OFFSET(memcg_cache_params_children));
+	fprintf(fp, "     memcg_cache_params_children_node: %ld\n",
+		OFFSET(memcg_cache_params_children_node));
 
 	fprintf(fp, "               net_device_next: %ld\n",
         	OFFSET(net_device_next));
@@ -9741,6 +9821,28 @@ dump_offset_table(char *spec, ulong makestruct)
         fprintf(fp, "                pci_bus_number: %ld\n",
         	OFFSET(pci_bus_number));
 
+        fprintf(fp, "                   pci_dev_dev: %ld\n",
+        	OFFSET(pci_dev_dev));
+        fprintf(fp, "              pci_dev_hdr_type: %ld\n",
+        	OFFSET(pci_dev_hdr_type));
+        fprintf(fp, "        pci_dev_pcie_flags_reg: %ld\n",
+        	OFFSET(pci_dev_pcie_flags_reg));
+        fprintf(fp, "                  pci_bus_node: %ld\n",
+        	OFFSET(pci_bus_node));
+        fprintf(fp, "               pci_bus_devices: %ld\n",
+        	OFFSET(pci_bus_devices));
+        fprintf(fp, "                   pci_bus_dev: %ld\n",
+        	OFFSET(pci_bus_dev));
+        fprintf(fp, "              pci_bus_children: %ld\n",
+        	OFFSET(pci_bus_children));
+        fprintf(fp, "                pci_bus_parent: %ld\n",
+        	OFFSET(pci_bus_parent));
+        fprintf(fp, "                  pci_bus_self: %ld\n",
+        	OFFSET(pci_bus_self));
+        fprintf(fp, "                   device_kobj: %ld\n",
+        	OFFSET(device_kobj));
+        fprintf(fp, "                  kobject_name: %ld\n",
+        	OFFSET(kobject_name));
 
         fprintf(fp, "         resource_entry_t_from: %ld\n",
         	OFFSET(resource_entry_t_from));
@@ -9935,6 +10037,18 @@ dump_offset_table(char *spec, ulong makestruct)
 		OFFSET(tss_struct_ist));
 	fprintf(fp, "   mem_section_section_mem_map: %ld\n",
 		OFFSET(mem_section_section_mem_map));
+	fprintf(fp, "   mem_section_pageblock_flags: %ld\n",
+		OFFSET(mem_section_pageblock_flags));
+	fprintf(fp, "              memory_block_dev: %ld\n",
+		OFFSET(memory_block_dev));
+	fprintf(fp, "              memory_block_nid: %ld\n",
+		OFFSET(memory_block_nid));
+	fprintf(fp, " memory_block_start_section_nr: %ld\n",
+		OFFSET(memory_block_start_section_nr));
+	fprintf(fp, "   memory_block_end_section_nr: %ld\n",
+		OFFSET(memory_block_end_section_nr));
+	fprintf(fp, "            memory_block_state: %ld\n",
+		OFFSET(memory_block_state));
 
 	fprintf(fp, "  vcpu_guest_context_user_regs: %ld\n",
 		OFFSET(vcpu_guest_context_user_regs));
@@ -10000,6 +10114,8 @@ dump_offset_table(char *spec, ulong makestruct)
 	fprintf(fp, "          s390_stack_frame_r14: %ld\n",
 		OFFSET(s390_stack_frame_r14));
 
+	fprintf(fp, "           cpu_context_save_r7: %ld\n",
+		OFFSET(cpu_context_save_r7));
 	fprintf(fp, "           cpu_context_save_fp: %ld\n",
 		OFFSET(cpu_context_save_fp));
 	fprintf(fp, "           cpu_context_save_sp: %ld\n",
@@ -10028,6 +10144,8 @@ dump_offset_table(char *spec, ulong makestruct)
 		OFFSET(unwind_idx_addr));
 	fprintf(fp, "               unwind_idx_insn: %ld\n",
 		OFFSET(unwind_idx_insn));
+	fprintf(fp, "                    bus_type_p: %ld\n",
+		OFFSET(bus_type_p));
 	fprintf(fp, "                 class_devices: %ld\n",
 		OFFSET(class_devices));
 	fprintf(fp, "                       class_p: %ld\n",
@@ -10038,6 +10156,10 @@ dump_offset_table(char *spec, ulong makestruct)
 		OFFSET(device_knode_class));
 	fprintf(fp, "                   device_node: %ld\n",
 		OFFSET(device_node));
+	fprintf(fp, "         device_private_device: %ld\n",
+		OFFSET(device_private_device));
+	fprintf(fp, "      device_private_knode_bus: %ld\n",
+		OFFSET(device_private_knode_bus));
 	fprintf(fp, "                   gendisk_dev: %ld\n",
 		OFFSET(gendisk_dev));
 	fprintf(fp, "                  gendisk_kobj: %ld\n",
@@ -10048,6 +10170,10 @@ dump_offset_table(char *spec, ulong makestruct)
 		OFFSET(gendisk_queue));
 	fprintf(fp, "                 hd_struct_dev: %ld\n",
 		OFFSET(hd_struct_dev));
+	fprintf(fp, "             hd_struct_dkstats: %ld\n",
+		OFFSET(hd_struct_dkstats));
+	fprintf(fp, "          disk_stats_in_flight: %ld\n",
+		OFFSET(disk_stats_in_flight));
 	fprintf(fp, "                  klist_k_list: %ld\n",
 		OFFSET(klist_k_list));
 	fprintf(fp, "            klist_node_n_klist: %ld\n",
@@ -10321,6 +10447,13 @@ dump_offset_table(char *spec, ulong makestruct)
 	fprintf(fp, "               user_struct_uid: %ld\n",
 		OFFSET(user_struct_uid));
 
+	fprintf(fp, "                xarray_xa_head: %ld\n",
+		OFFSET(xarray_xa_head));
+	fprintf(fp, "                 xa_node_slots: %ld\n",
+		OFFSET(xa_node_slots));
+	fprintf(fp, "                 xa_node_shift: %ld\n",
+		OFFSET(xa_node_shift));
+
 	fprintf(fp, "\n                    size_table:\n");
 	fprintf(fp, "                          page: %ld\n", SIZE(page));
 	fprintf(fp, "                    page_flags: %ld\n", SIZE(page_flags));
@@ -10574,6 +10707,11 @@ dump_offset_table(char *spec, ulong makestruct)
 		SIZE(bpf_map));
 	fprintf(fp, "                      bpf_insn: %ld\n",
 		SIZE(bpf_insn));
+	fprintf(fp, "                        xarray: %ld\n",
+		SIZE(xarray));
+	fprintf(fp, "                       xa_node: %ld\n",
+		SIZE(xa_node));
+
 
         fprintf(fp, "\n                   array_table:\n");
 	/*
@@ -10641,6 +10779,8 @@ dump_offset_table(char *spec, ulong makestruct)
 		ARRAY_LENGTH(task_struct_rlim));
 	fprintf(fp, "            signal_struct_rlim: %d\n",
 		ARRAY_LENGTH(signal_struct_rlim));
+	fprintf(fp, "                  vm_numa_stat: %d\n",
+		ARRAY_LENGTH(vm_numa_stat));
 
 	if (spec) {
 		int in_size_table, in_array_table, arrays, offsets, sizes;
@@ -13130,4 +13270,74 @@ is_downsized(char *name)
 	}
 
 	return FALSE;
+}
+
+struct syment *
+symbol_complete_match(const char *match, struct syment *sp_last)
+{
+	int i;
+	struct syment *sp, *sp_end, *sp_start;
+	struct load_module *lm;
+	int search_init;
+
+	if (sp_last) {
+		sp_start = next_symbol(NULL, sp_last);
+		if (!sp_start)
+			return NULL;
+	} else	
+		sp_start = st->symtable;
+
+	if ((sp_start >= st->symtable) && (sp_start < st->symend)) {
+		for (sp = sp_start; sp < st->symend; sp++) {
+			if (STRNEQ(sp->name, match))
+				return sp;
+		}
+		sp_start = NULL;
+	}
+
+	search_init = FALSE;
+
+	for (i = 0; i < st->mods_installed; i++) {
+		lm = &st->load_modules[i];
+		if (lm->mod_flags & MOD_INIT)
+			search_init = TRUE;
+		sp_end = lm->mod_symend;
+		if (!sp_start)
+			sp_start = lm->mod_symtable;
+
+		if ((sp_start >= lm->mod_symtable) && (sp_start < sp_end)) {
+			for (sp = sp_start; sp < sp_end; sp++) {
+				if (MODULE_START(sp))
+					continue;
+	
+				if (STRNEQ(sp->name, match))
+					return sp;
+			}
+			sp_start = NULL;
+		}
+	}
+
+	if (!search_init)
+		return NULL;
+	
+	for (i = 0; i < st->mods_installed; i++) {
+		lm = &st->load_modules[i];
+		if (!lm->mod_init_symtable)
+			continue;
+		sp_end = lm->mod_init_symend;
+		if (!sp_start)
+			sp_start = lm->mod_init_symtable;
+
+		if ((sp_start >= lm->mod_init_symtable) && (sp_start < sp_end)) {
+			for (sp = sp_start; sp < sp_end; sp++) {
+				if (MODULE_START(sp))
+					continue;
+	
+				if (STRNEQ(sp->name, match))
+					return sp;
+			}
+		}
+	}
+
+	return NULL;
 }

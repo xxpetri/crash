@@ -1,8 +1,8 @@
 /* defs.h - core analysis suite
  *
  * Copyright (C) 1999, 2000, 2001, 2002 Mission Critical Linux, Inc.
- * Copyright (C) 2002-2018 David Anderson
- * Copyright (C) 2002-2018 Red Hat, Inc. All rights reserved.
+ * Copyright (C) 2002-2019 David Anderson
+ * Copyright (C) 2002-2019 Red Hat, Inc. All rights reserved.
  * Copyright (C) 2002 Silicon Graphics, Inc.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -640,7 +640,6 @@ struct new_utsname {
 #define ARCH_PVOPS          (0x10000000)
 #define PRE_KERNEL_INIT     (0x20000000)
 #define ARCH_PVOPS_XEN      (0x40000000)
-#define IRQ_DESC_TREE       (0x80000000)
 
 #define GCC_VERSION_DEPRECATED (GCC_3_2|GCC_3_2_3|GCC_2_96|GCC_3_3_2|GCC_3_3_3)
 
@@ -651,6 +650,8 @@ struct new_utsname {
 #define GET_TIMESTAMP               (0x8ULL)
 #define TVEC_BASES_V3              (0x10ULL)
 #define TIMER_BASES                (0x20ULL)
+#define IRQ_DESC_TREE_RADIX        (0x40ULL)
+#define IRQ_DESC_TREE_XARRAY       (0x80ULL)
 
 #define XEN()       (kt->flags & ARCH_XEN)
 #define OPENVZ()    (kt->flags & ARCH_OPENVZ)
@@ -837,6 +838,7 @@ struct task_table {                      /* kernel/local task table data */
 	ulong pid_radix_tree;
 	int callbacks;
 	struct task_context **context_by_task; /* task_context sorted by task addr */
+	ulong pid_xarray;
 };
 
 #define TASK_INIT_DONE       (0x1)
@@ -858,6 +860,7 @@ struct task_table {                      /* kernel/local task table data */
 #define THREAD_INFO_IN_TASK (0x10000)
 #define PID_RADIX_TREE   (0x20000)
 #define INDEXED_CONTEXTS (0x40000)
+#define PID_XARRAY       (0x80000)
 
 #define TASK_SLUSH (20)
 
@@ -2020,6 +2023,7 @@ struct offset_table {                    /* stash of commonly-used offsets */
 	long bpf_prog_aux_user;
 	long user_struct_uid;
 	long idr_cur;
+	
 	/* appcore add ons */
 	long mm_struct_map_count;
 	long mm_struct_flags;
@@ -2033,6 +2037,41 @@ struct offset_table {                    /* stash of commonly-used offsets */
 	long task_struct_real_cred;
 	long cred_gid;
 	long cred_uid;
+	/* end of appcore add ons */
+	
+	long kmem_cache_memcg_params;
+	long memcg_cache_params___root_caches_node;
+	long memcg_cache_params_children;
+	long memcg_cache_params_children_node;
+	long task_struct_pid_links;
+	long kernel_symbol_value;
+	long pci_dev_dev;
+        long pci_dev_hdr_type;
+        long pci_dev_pcie_flags_reg;
+        long pci_bus_node;
+        long pci_bus_devices;
+        long pci_bus_dev;
+        long pci_bus_children;
+        long pci_bus_parent;
+        long pci_bus_self;
+	long device_kobj;
+	long kobject_name;
+	long memory_block_dev;
+	long memory_block_start_section_nr;
+	long memory_block_end_section_nr;
+	long memory_block_state;
+	long memory_block_nid;
+	long mem_section_pageblock_flags;
+	long bus_type_p;
+	long device_private_device;
+	long device_private_knode_bus;
+	long xarray_xa_head;
+	long xa_node_slots;
+	long xa_node_shift;
+	long hd_struct_dkstats;
+	long disk_stats_in_flight;
+	long cpu_context_save_r7;
+	long dentry_d_sb;
 };
 
 struct size_table {         /* stash of commonly-used sizes */
@@ -2188,7 +2227,9 @@ struct size_table {         /* stash of commonly-used sizes */
 	long bpf_prog_aux;
 	long bpf_map;
 	long bpf_insn;
-	long cred;
+	long cred;   /* add on for fsp2 */
+	long xarray;
+	long xa_node;
 };
 
 struct array_table {
@@ -2222,6 +2263,7 @@ struct array_table {
 	int height_to_maxnodes;
 	int task_struct_rlim;
 	int signal_struct_rlim;
+	int vm_numa_stat;
 };
 
 /*
@@ -2234,6 +2276,7 @@ struct array_table {
 #define ANON_MEMBER_OFFSET_REQUEST ((struct datatype_member *)(-2))
 #define MEMBER_TYPE_REQUEST ((struct datatype_member *)(-3))
 #define STRUCT_SIZE_REQUEST ((struct datatype_member *)(-4))
+#define MEMBER_TYPE_NAME_REQUEST ((struct datatype_member *)(-5))
 
 #define STRUCT_SIZE(X)      datatype_info((X), NULL, STRUCT_SIZE_REQUEST)
 #define UNION_SIZE(X)       datatype_info((X), NULL, STRUCT_SIZE_REQUEST)
@@ -2243,6 +2286,7 @@ struct array_table {
 #define MEMBER_EXISTS(X,Y)  (datatype_info((X), (Y), NULL) >= 0)
 #define MEMBER_SIZE(X,Y)    datatype_info((X), (Y), MEMBER_SIZE_REQUEST)
 #define MEMBER_TYPE(X,Y)    datatype_info((X), (Y), MEMBER_TYPE_REQUEST)
+#define MEMBER_TYPE_NAME(X,Y)    ((char *)datatype_info((X), (Y), MEMBER_TYPE_NAME_REQUEST))
 #define ANON_MEMBER_OFFSET(X,Y)    datatype_info((X), (Y), ANON_MEMBER_OFFSET_REQUEST)
 
 /*
@@ -2489,6 +2533,7 @@ struct vm_table {                /* kernel VM-related data */
 #define PAGEFLAGS             (0x4000000)
 #define SLAB_OVERLOAD_PAGE    (0x8000000)
 #define SLAB_CPU_CACHE       (0x10000000)
+#define SLAB_ROOT_CACHES     (0x20000000)
 
 #define IS_FLATMEM()		(vt->flags & FLATMEM)
 #define IS_DISCONTIGMEM()	(vt->flags & DISCONTIGMEM)
@@ -3088,7 +3133,7 @@ typedef signed int s32;
 #define PMD_SHIFT_L3_64K     (29)
 #define PMD_SIZE_L3_64K      (1UL << PMD_SHIFT_L3_64K)
 #define PMD_MASK_L3_64K      (~(PMD_SIZE_L3_64K-1))
-#define PGDIR_OFFSET_L3_64K(X) (((ulong)(X)) & ((PTRS_PER_PGD_L3_64K * 8) - 1))
+#define PGDIR_OFFSET_L3_64K(X) (((ulong)(X)) & ((machdep->ptrs_per_pgd * 8) - 1))
 
 /*
  * 2-levels / 64K pages
@@ -3150,9 +3195,17 @@ typedef signed int s32;
  */
 #define ARM64_VA_START       ((0xffffffffffffffffUL) \
 					<< machdep->machspec->VA_BITS)
+#define _VA_START(va)        ((0xffffffffffffffffUL) - \
+                             ((1UL) << ((va) - 1)) + 1)
+#define TEXT_OFFSET_MASK     (~((MEGABYTES(2UL))-1))
+
 #define ARM64_PAGE_OFFSET    ((0xffffffffffffffffUL) \
 					<< (machdep->machspec->VA_BITS - 1))
+#define ARM64_PAGE_OFFSET_ACTUAL ((0xffffffffffffffffUL) \
+					- ((1UL) << machdep->machspec->VA_BITS_ACTUAL) + 1)
+
 #define ARM64_USERSPACE_TOP  ((1UL) << machdep->machspec->VA_BITS)
+#define ARM64_USERSPACE_TOP_ACTUAL  ((1UL) << machdep->machspec->VA_BITS_ACTUAL)
 
 /* only used for v4.6 or later */
 #define ARM64_MODULES_VSIZE     MEGABYTES(128)
@@ -3175,6 +3228,7 @@ typedef signed int s32;
 #define _SECTION_SIZE_BITS      30
 #define _MAX_PHYSMEM_BITS       40
 #define _MAX_PHYSMEM_BITS_3_17  48
+#define _MAX_PHYSMEM_BITS_52    52
 
 typedef unsigned long long __u64;
 typedef unsigned long long u64;
@@ -3254,6 +3308,9 @@ struct machine_specific {
 	ulong kern_eframe_offset;
 	ulong machine_kexec_start;
 	ulong machine_kexec_end;
+	ulong VA_BITS_ACTUAL;
+	ulong CONFIG_ARM64_VA_BITS;
+	ulong VA_START;
 };
 
 struct arm64_stackframe {
@@ -3442,6 +3499,9 @@ struct arm64_stackframe {
 #define VMEMMAP_VADDR_5LEVEL       0xffd4000000000000
 #define VMEMMAP_END_5LEVEL         0xffd5ffffffffffff
 
+#define PAGE_OFFSET_4LEVEL_4_20    0xffff888000000000
+#define PAGE_OFFSET_5LEVEL_4_20    0xff11000000000000
+
 #define VSYSCALL_START             0xffffffffff600000
 #define VSYSCALL_END               0xffffffffff601000
 
@@ -3530,8 +3590,8 @@ struct arm64_stackframe {
 
 #define SWP_TYPE(entry) (((entry) >> 1) & 0x3f)
 #define SWP_OFFSET(entry) ((entry) >> 8)
-#define __swp_type(entry)   SWP_TYPE(entry)
-#define __swp_offset(entry) SWP_OFFSET(entry)
+#define __swp_type(entry)   x86_64_swp_type(entry)
+#define __swp_offset(entry) x86_64_swp_offset(entry)
 
 #define TIF_SIGPENDING  (2)
 
@@ -4108,6 +4168,8 @@ struct efi_memory_desc_t {
 #define _SECTION_SIZE_BITS	24
 #define _MAX_PHYSMEM_BITS	44
 #define _MAX_PHYSMEM_BITS_3_7   46
+#define _MAX_PHYSMEM_BITS_4_19  47
+#define _MAX_PHYSMEM_BITS_4_20  51
 
 #endif /* PPC64 */
 
@@ -4600,6 +4662,11 @@ struct gnu_request {
     		struct objfile *obj;
   	} global_iterator;
 	struct load_module *lm;
+	char *member_main_type_name;
+	char *member_main_type_tag_name;
+	char *member_target_type_name;
+	char *member_target_type_tag_name;
+	char *type_tag_name;
 };
 
 /*
@@ -4911,6 +4978,7 @@ int clean_exit(int);
 int untrusted_file(FILE *, char *);
 char *readmem_function_name(void);
 char *writemem_function_name(void);
+char *no_vmcoreinfo(const char *);
 
 /*
  *  cmdline.c
@@ -5008,8 +5076,16 @@ struct radix_tree_ops {
 	void *private;
 };
 int do_radix_tree_traverse(ulong ptr, int is_root, struct radix_tree_ops *ops);
+struct xarray_ops {
+	void (*entry)(ulong node, ulong slot, const char *path,
+		      ulong index, void *private);
+	uint radix;
+	void *private;
+};
+int do_xarray_traverse(ulong ptr, int is_root, struct xarray_ops *ops);
 int do_rdtree(struct tree_data *);
 int do_rbtree(struct tree_data *);
+int do_xatree(struct tree_data *);
 int retrieve_list(ulong *, int);
 long power(long, int);
 long long ll_power(long long, long long);
@@ -5134,6 +5210,7 @@ struct syment *per_cpu_symbol_search(char *);
 int symbol_exists(char *s);
 int kernel_symbol_exists(char *s);
 struct syment *kernel_symbol_search(char *);
+ulong symbol_value_from_proc_kallsyms(char *);
 int get_syment_array(char *, struct syment **, int);
 void set_temporary_radix(unsigned int, unsigned int *);
 void restore_current_radix(unsigned int);
@@ -5205,6 +5282,7 @@ void parse_for_member_extended(struct datatype_member *, ulong);
 void add_to_downsized(char *);
 int is_downsized(char *);
 int is_string(char *, char *);
+struct syment *symbol_complete_match(const char *, struct syment *);
 
 /*  
  *  memory.c 
@@ -5300,16 +5378,32 @@ char *fill_inode_cache(ulong);
 void clear_inode_cache(void);
 int monitor_memory(long *, long *, long *, long *);
 int is_readable(char *);
+struct list_pair {
+	ulong index;
+	void *value;
+};
+#define radix_tree_pair list_pair
+ulong do_radix_tree(ulong, int, struct list_pair *);
 #define RADIX_TREE_COUNT   (1)
 #define RADIX_TREE_SEARCH  (2)
 #define RADIX_TREE_DUMP    (3)
 #define RADIX_TREE_GATHER  (4)
 #define RADIX_TREE_DUMP_CB (5)
-struct radix_tree_pair {
-	ulong index;
-	void *value;
-};
-ulong do_radix_tree(ulong, int, struct radix_tree_pair *);
+/*
+ * from: "include/linux/radix-tree.h"
+ */
+#define RADIX_TREE_ENTRY_MASK           3UL
+#define RADIX_TREE_EXCEPTIONAL_ENTRY    2
+
+ulong do_xarray(ulong, int, struct list_pair *);
+#define XARRAY_COUNT   (1)
+#define XARRAY_SEARCH  (2)
+#define XARRAY_DUMP    (3)
+#define XARRAY_GATHER  (4)
+#define XARRAY_DUMP_CB (5)
+#define XARRAY_TAG_MASK      (3UL)
+#define XARRAY_TAG_INTERNAL  (2UL)
+
 int file_dump(ulong, ulong, ulong, int, int);
 #define DUMP_FULL_NAME      0x1
 #define DUMP_INODE_ONLY     0x2
@@ -5792,6 +5886,8 @@ void x86_64_dump_machdep_table(ulong);
 ulong x86_64_PTOV(ulong);
 ulong x86_64_VTOP(ulong);
 int x86_64_IS_VMALLOC_ADDR(ulong);
+ulong x86_64_swp_type(ulong);
+ulong x86_64_swp_offset(ulong);
 void x86_64_display_idt_table(void);
 #define display_idt_table() x86_64_display_idt_table()
 long x86_64_exception_frame(ulong, ulong, char *, struct bt_info *, FILE *);
@@ -5842,6 +5938,7 @@ typedef struct __attribute__((__packed__)) {
         unsigned int sp_reg:4;
         unsigned int bp_reg:4;
         unsigned int type:2;
+        unsigned int end:1;
 } kernel_orc_entry;
 
 struct ORC_data {
@@ -5912,6 +6009,7 @@ struct machine_specific {
 	ulong ptrs_per_pgd;
 	ulong cpu_entry_area_start;
 	ulong cpu_entry_area_end;
+	ulong page_offset_force;
 };
 
 #define KSYMS_START    (0x1)
@@ -5930,6 +6028,7 @@ struct machine_specific {
 #define VM_5LEVEL   (0x2000)
 #define ORC         (0x4000)
 #define KPTI        (0x8000)
+#define L1TF       (0x10000)
 
 #define VM_FLAGS (VM_ORIG|VM_2_6_11|VM_XEN|VM_XEN_RHEL4|VM_5LEVEL)
 
@@ -6000,6 +6099,12 @@ struct ppc64_elf_prstatus {
 
 #ifdef PPC64
 
+struct ppc64_opal {
+	uint64_t base;
+	uint64_t entry;
+	uint64_t size;
+};
+
 struct ppc64_vmemmap {
         unsigned long phys;
         unsigned long virt;
@@ -6050,6 +6155,7 @@ struct machine_specific {
 	ulong _page_accessed;
 	int (*is_kvaddr)(ulong);
 	int (*is_vmaddr)(ulong);
+	struct ppc64_opal opal;
 };
 
 void ppc64_init(int);
@@ -6067,6 +6173,7 @@ void ppc64_dump_machdep_table(ulong);
  * in the kernel is also 0x40.
  */
 #define RADIX_MMU       (0x40)
+#define OPAL_FW         (0x80)
 
 #define REGION_SHIFT       (60UL)
 #define REGION_ID(addr)    (((unsigned long)(addr)) >> REGION_SHIFT)
@@ -6350,7 +6457,7 @@ int kdump_phys_base(ulong *);
 int kdump_set_phys_base(ulong);
 int arm_kdump_phys_base(ulong *);
 int is_proc_kcore(char *, ulong);
-int proc_kcore_init(FILE *);
+int proc_kcore_init(FILE *, int);
 int read_proc_kcore(int, void *, int, ulong, physaddr_t);
 int write_proc_kcore(int, void *, int, ulong, physaddr_t);
 int kcore_memory_dump(FILE *);
